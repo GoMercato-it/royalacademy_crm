@@ -6,6 +6,7 @@ use Espo\Core\Utils\Log;
 
 class WhatsAppClient
 {
+    // TODO: generate uuid for each session
     private string $sessionId = 'espocrm-session';
     private Config $config;
     private Log $log;
