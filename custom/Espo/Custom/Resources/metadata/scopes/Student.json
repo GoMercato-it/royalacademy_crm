@@ -1,0 +1,16 @@
+{
+    "entity": true,
+    "type": "Base",
+    "module": "Custom",
+    "object": true,
+    "tab": true,
+    "layouts": true,
+    "acl": true,
+    "aclPortal": "recordAllStudentNo",
+    "customizable": true,
+    "stream": true,
+    "stars": true,
+    "importable": true,
+    "notifications": true,
+    "isCustom": true
+}

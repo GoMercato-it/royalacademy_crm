@@ -1,0 +1,74 @@
+[
+    {
+        "name": "name"
+    },
+    {
+        "name": "assignedUser"
+    },
+    {
+        "name": "firstName"
+    },
+    {
+        "name": "lastName"
+    },
+    {
+        "name": "dateOfBirth"
+    },
+    {
+        "name": "phone"
+    },
+    {
+        "name": "email"
+    },
+    {
+        "name": "city"
+    },
+    {
+        "name": "country"
+    },
+    {
+        "name": "languagePreference"
+    },
+    {
+        "name": "enrollmentDate"
+    },
+    {
+        "name": "status"
+    },
+    {
+        "name": "emergencyContact"
+    },
+    {
+        "name": "emergencyPhone"
+    },
+    {
+        "name": "educationLevel"
+    },
+    {
+        "name": "instagram"
+    },
+    {
+        "name": "portfolioUrl"
+    },
+    {
+        "name": "phoneIsOptedOut"
+    },
+    {
+        "name": "phoneIsInvalid"
+    },
+    {
+        "name": "emailIsOptedOut"
+    },
+    {
+        "name": "emailIsInvalid"
+    },
+    {
+        "name": "emergencyPhoneIsOptedOut"
+    },
+    {
+        "name": "emergencyPhoneIsInvalid"
+    },
+    {
+        "name": "streamUpdatedAt"
+    }
+]

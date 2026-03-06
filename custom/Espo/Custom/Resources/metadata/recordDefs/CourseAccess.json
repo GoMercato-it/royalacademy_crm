@@ -1,0 +1,9 @@
+{
+    "layout": {
+        "list": "list",
+        "detail": "detail",
+        "edit": "edit",
+        "search": "search",
+        "massUpdate": "massUpdate"
+    }
+}

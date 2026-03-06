@@ -1,0 +1,21 @@
+[
+    {
+        "name": "name",
+        "link": true
+    },
+    {
+        "name": "assignedUser"
+    },
+    {
+        "name": "firstName"
+    },
+    {
+        "name": "lastName"
+    },
+    {
+        "name": "dateOfBirth"
+    },
+    {
+        "name": "phone"
+    }
+]

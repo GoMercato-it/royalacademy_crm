@@ -1,0 +1,16 @@
+{
+    "labels": {
+        "Create CourseAccess": "Crea Accesso Corso"
+    },
+    "fields": {
+        "name": "Nome",
+        "description": "Descrizione",
+        "student": "Studente",
+        "course": "Corso",
+        "isActive": "Attivo",
+        "assignedAt": "Assegnato il",
+        "courseCompleted": "Corso Completato",
+        "completedAt": "Completato il"
+    },
+    "links": []
+}

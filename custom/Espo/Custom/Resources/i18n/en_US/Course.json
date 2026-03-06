@@ -1,0 +1,30 @@
+{
+    "labels": {
+        "Create Course": "Create Course"
+    },
+    "fields": {
+        "name": "Name",
+        "status": "Status",
+        "category": "Category",
+        "price": "Price",
+        "description": "Description",
+        "durationHours": "Duration (Hours)",
+        "coverImageKey": "Cover Image",
+        "sections": "Sections",
+        "courseAccesses": "Student Accesses"
+    },
+    "links": [],
+    "options": {
+        "status": {
+            "Bozza": "Draft",
+            "Attivo": "Active",
+            "Archiviato": "Archived"
+        },
+        "category": {
+            "Professional": "Professional",
+            "Masterclass": "Masterclass",
+            "Workshop": "Workshop",
+            "Online": "Online"
+        }
+    }
+}

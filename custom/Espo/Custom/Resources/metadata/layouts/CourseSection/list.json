@@ -1,0 +1,21 @@
+[
+    {
+        "name": "name",
+        "link": true
+    },
+    {
+        "name": "assignedUser"
+    },
+    {
+        "name": "course"
+    },
+    {
+        "name": "order"
+    },
+    {
+        "name": "pdfMinioKey"
+    },
+    {
+        "name": "startPage"
+    }
+]

@@ -1,0 +1,29 @@
+[
+    {
+        "name": "name"
+    },
+    {
+        "name": "assignedUser"
+    },
+    {
+        "name": "course"
+    },
+    {
+        "name": "order"
+    },
+    {
+        "name": "pdfMinioKey"
+    },
+    {
+        "name": "startPage"
+    },
+    {
+        "name": "endPage"
+    },
+    {
+        "name": "isActive"
+    },
+    {
+        "name": "streamUpdatedAt"
+    }
+]

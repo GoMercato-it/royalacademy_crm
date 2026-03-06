@@ -1,0 +1,21 @@
+[
+    {
+        "name": "name",
+        "link": true
+    },
+    {
+        "name": "assignedUser"
+    },
+    {
+        "name": "status"
+    },
+    {
+        "name": "category"
+    },
+    {
+        "name": "durationHours"
+    },
+    {
+        "name": "price"
+    }
+]

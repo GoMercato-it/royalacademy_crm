@@ -1,0 +1,51 @@
+[
+    {
+        "label": "Overview",
+        "rows": [
+            [
+                {
+                    "name": "name"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "description"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "assignedUser"
+                },
+                {
+                    "name": "student"
+                }
+            ],
+            [
+                {
+                    "name": "course"
+                },
+                {
+                    "name": "isActive"
+                }
+            ],
+            [
+                {
+                    "name": "assignedAt"
+                },
+                {
+                    "name": "courseCompleted"
+                }
+            ],
+            [
+                {
+                    "name": "completedAt"
+                },
+                {
+                    "name": "streamUpdatedAt"
+                }
+            ]
+        ]
+    }
+]

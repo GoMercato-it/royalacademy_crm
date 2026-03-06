@@ -1,0 +1,29 @@
+[
+    {
+        "name": "name"
+    },
+    {
+        "name": "assignedUser"
+    },
+    {
+        "name": "student"
+    },
+    {
+        "name": "course"
+    },
+    {
+        "name": "isActive"
+    },
+    {
+        "name": "assignedAt"
+    },
+    {
+        "name": "courseCompleted"
+    },
+    {
+        "name": "completedAt"
+    },
+    {
+        "name": "streamUpdatedAt"
+    }
+]

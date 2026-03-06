@@ -1,0 +1,14 @@
+{
+    "scopeNames": {
+        "Course": "Corso",
+        "CourseSection": "Sezione Corso",
+        "CourseAccess": "Accesso Corso",
+        "Student": "Studente"
+    },
+    "scopeNamesPlural": {
+        "Course": "Corsi",
+        "CourseSection": "Sezioni Corso",
+        "CourseAccess": "Accessi Corso",
+        "Student": "Studenti"
+    }
+}

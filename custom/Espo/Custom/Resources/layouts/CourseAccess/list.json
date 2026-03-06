@@ -1,0 +1,20 @@
+[
+    {
+        "name": "name",
+        "link": true
+    },
+    {
+        "name": "student",
+        "link": true
+    },
+    {
+        "name": "course",
+        "link": true
+    },
+    {
+        "name": "isActive"
+    },
+    {
+        "name": "courseCompleted"
+    }
+]

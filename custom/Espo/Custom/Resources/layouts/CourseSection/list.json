@@ -1,0 +1,16 @@
+[
+    {
+        "name": "course",
+        "link": true
+    },
+    {
+        "name": "name",
+        "link": true
+    },
+    {
+        "name": "order"
+    },
+    {
+        "name": "isActive"
+    }
+]
