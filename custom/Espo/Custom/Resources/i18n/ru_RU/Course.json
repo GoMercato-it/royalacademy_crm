@@ -1,0 +1,30 @@
+{
+    "labels": {
+        "Create Course": "Создать курс"
+    },
+    "fields": {
+        "name": "Название",
+        "status": "Статус",
+        "category": "Категория",
+        "price": "Цена",
+        "description": "Описание",
+        "durationHours": "Продолжительность (часы)",
+        "coverImageKey": "Обложка (Изображение)",
+        "sections": "Разделы",
+        "courseAccesses": "Доступы студентов"
+    },
+    "links": [],
+    "options": {
+        "status": {
+            "Bozza": "Черновик",
+            "Attivo": "Активен",
+            "Archiviato": "В архиве"
+        },
+        "category": {
+            "Professional": "Профессиональный (Prof)",
+            "Masterclass": "Мастер-класс",
+            "Workshop": "Воркшоп",
+            "Online": "Онлайн"
+        }
+    }
+}

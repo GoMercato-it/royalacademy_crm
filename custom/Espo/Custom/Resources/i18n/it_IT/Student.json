@@ -1,0 +1,48 @@
+{
+    "labels": {
+        "Create Student": "Crea Studente"
+    },
+    "fields": {
+        "name": "Nome",
+        "email": "Email",
+        "phone": "Telefono",
+        "status": "Stato",
+        "description": "Descrizione",
+        "firstName": "Nome",
+        "lastName": "Cognome",
+        "dateOfBirth": "Data di nascita",
+        "address": "Indirizzo",
+        "city": "Città",
+        "country": "Nazione",
+        "languagePreference": "Lingua preferita",
+        "enrollmentDate": "Data di iscrizione",
+        "notes": "Note",
+        "emergencyContact": "Contatto di emergenza",
+        "emergencyPhone": "Telefono emergenza",
+        "educationLevel": "Titolo di studio",
+        "previousExperience": "Esperienza precedente",
+        "instagram": "Instagram",
+        "portfolioUrl": "URL Portfolio",
+        "profilePhotoKey": "Foto Profilo",
+        "courseAccesses": "Corsi Assegnati"
+    },
+    "links": [],
+    "options": {
+        "status": {
+            "Attiva": "Attiva",
+            "Inattiva": "Inattiva",
+            "Diplomata": "Diplomata",
+            "Sospesa": "Sospesa"
+        },
+        "languagePreference": {
+            "Italiano": "Italiano",
+            "English": "Inglese",
+            "Russian": "Russo"
+        },
+        "educationLevel": {
+            "Licenza media": "Licenza media",
+            "Diploma": "Diploma",
+            "Laurea": "Laurea"
+        }
+    }
+}

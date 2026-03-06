@@ -1,0 +1,11 @@
+[
+    "firstName",
+    "lastName",
+    "email",
+    "phone",
+    "status",
+    "city",
+    "country",
+    "languagePreference",
+    "assignedUser"
+]

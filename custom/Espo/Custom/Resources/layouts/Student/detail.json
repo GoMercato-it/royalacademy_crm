@@ -1,0 +1,87 @@
+[
+    {
+        "label": "Overview",
+        "rows": [
+            [
+                {
+                    "name": "firstName"
+                },
+                {
+                    "name": "lastName"
+                }
+            ],
+            [
+                {
+                    "name": "email"
+                },
+                {
+                    "name": "phone"
+                }
+            ],
+            [
+                {
+                    "name": "status"
+                },
+                {
+                    "name": "languagePreference"
+                }
+            ],
+            [
+                {
+                    "name": "dateOfBirth"
+                },
+                {
+                    "name": "enrollmentDate"
+                }
+            ],
+            [
+                {
+                    "name": "city"
+                },
+                {
+                    "name": "country"
+                }
+            ],
+            [
+                {
+                    "name": "address",
+                    "fullWidth": true
+                }
+            ],
+            [
+                {
+                    "name": "educationLevel"
+                },
+                {
+                    "name": "emergencyContact"
+                }
+            ],
+            [
+                {
+                    "name": "emergencyPhone"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "previousExperience",
+                    "fullWidth": true
+                }
+            ],
+            [
+                {
+                    "name": "instagram"
+                },
+                {
+                    "name": "portfolioUrl"
+                }
+            ],
+            [
+                {
+                    "name": "notes",
+                    "fullWidth": true
+                }
+            ]
+        ]
+    }
+]

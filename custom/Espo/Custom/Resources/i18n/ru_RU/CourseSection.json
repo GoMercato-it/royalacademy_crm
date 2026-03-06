@@ -1,0 +1,16 @@
+{
+    "labels": {
+        "Create CourseSection": "Создать раздел курса"
+    },
+    "fields": {
+        "name": "Название",
+        "description": "Описание",
+        "course": "Курс",
+        "order": "Порядок",
+        "pdfMinioKey": "PDF Документ",
+        "startPage": "Начальная страница",
+        "endPage": "Конечная страница",
+        "isActive": "Активен"
+    },
+    "links": []
+}

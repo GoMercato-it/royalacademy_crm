@@ -1,0 +1,51 @@
+[
+    {
+        "label": "Overview",
+        "rows": [
+            [
+                {
+                    "name": "name"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "description"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "assignedUser"
+                },
+                {
+                    "name": "status"
+                }
+            ],
+            [
+                {
+                    "name": "category"
+                },
+                {
+                    "name": "durationHours"
+                }
+            ],
+            [
+                {
+                    "name": "price"
+                },
+                {
+                    "name": "priceCurrency"
+                }
+            ],
+            [
+                {
+                    "name": "priceConverted"
+                },
+                {
+                    "name": "streamUpdatedAt"
+                }
+            ]
+        ]
+    }
+]

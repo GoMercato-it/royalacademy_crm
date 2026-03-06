@@ -1,0 +1,51 @@
+[
+    {
+        "label": "Overview",
+        "rows": [
+            [
+                {
+                    "name": "name"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "description"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "assignedUser"
+                },
+                {
+                    "name": "course"
+                }
+            ],
+            [
+                {
+                    "name": "order"
+                },
+                {
+                    "name": "pdfMinioKey"
+                }
+            ],
+            [
+                {
+                    "name": "startPage"
+                },
+                {
+                    "name": "endPage"
+                }
+            ],
+            [
+                {
+                    "name": "isActive"
+                },
+                {
+                    "name": "streamUpdatedAt"
+                }
+            ]
+        ]
+    }
+]

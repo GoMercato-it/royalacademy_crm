@@ -1,0 +1,16 @@
+{
+    "entity": true,
+    "type": "Base",
+    "module": "Custom",
+    "object": true,
+    "tab": false,
+    "layouts": true,
+    "acl": true,
+    "aclPortal": "recordAllCourseSectionNo",
+    "customizable": true,
+    "stream": true,
+    "stars": true,
+    "importable": true,
+    "notifications": true,
+    "isCustom": true
+}

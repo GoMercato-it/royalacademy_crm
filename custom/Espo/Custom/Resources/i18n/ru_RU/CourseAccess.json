@@ -1,0 +1,16 @@
+{
+    "labels": {
+        "Create CourseAccess": "Создать доступ к курсу"
+    },
+    "fields": {
+        "name": "Название",
+        "description": "Описание",
+        "student": "Студент",
+        "course": "Курс",
+        "isActive": "Активен",
+        "assignedAt": "Назначен (Дата)",
+        "courseCompleted": "Курс завершен",
+        "completedAt": "Завершен (Дата)"
+    },
+    "links": []
+}

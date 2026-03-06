@@ -1,0 +1,23 @@
+[
+    {
+        "name": "assignedUser",
+        "label": "Assigned User",
+        "style": "default"
+    },
+    {
+        "name": "teams",
+        "label": "Teams",
+        "style": "default"
+    },
+    {
+        "name": "system",
+        "label": "System",
+        "style": "default",
+        "fieldList": [
+            "createdAt",
+            "modifiedAt",
+            "createdBy",
+            "modifiedBy"
+        ]
+    }
+]

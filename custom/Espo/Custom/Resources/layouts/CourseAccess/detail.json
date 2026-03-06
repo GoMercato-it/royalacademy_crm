@@ -1,0 +1,43 @@
+[
+    {
+        "label": "Overview",
+        "rows": [
+            [
+                {
+                    "name": "name"
+                },
+                false
+            ],
+            [
+                {
+                    "name": "student"
+                },
+                {
+                    "name": "course"
+                }
+            ],
+            [
+                {
+                    "name": "isActive"
+                },
+                {
+                    "name": "assignedAt"
+                }
+            ],
+            [
+                {
+                    "name": "courseCompleted"
+                },
+                {
+                    "name": "completedAt"
+                }
+            ],
+            [
+                {
+                    "name": "description",
+                    "fullWidth": true
+                }
+            ]
+        ]
+    }
+]

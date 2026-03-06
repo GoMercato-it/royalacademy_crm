@@ -1,0 +1,48 @@
+{
+    "labels": {
+        "Create Student": "Создать студента"
+    },
+    "fields": {
+        "name": "Имя (Полное)",
+        "email": "Email",
+        "phone": "Телефон",
+        "status": "Статус",
+        "description": "Описание",
+        "firstName": "Имя",
+        "lastName": "Фамилия",
+        "dateOfBirth": "Дата рождения",
+        "address": "Адрес",
+        "city": "Город",
+        "country": "Страна",
+        "languagePreference": "Предпочитаемый язык",
+        "enrollmentDate": "Дата зачисления",
+        "notes": "Заметки",
+        "emergencyContact": "Экстренный контакт",
+        "emergencyPhone": "Телефон для экстренной связи",
+        "educationLevel": "Уровень образования",
+        "previousExperience": "Предыдущий опыт",
+        "instagram": "Instagram",
+        "portfolioUrl": "URL Портфолио",
+        "profilePhotoKey": "Фото профиля",
+        "courseAccesses": "Назначенные курсы"
+    },
+    "links": [],
+    "options": {
+        "status": {
+            "Attiva": "Активен",
+            "Inattiva": "Неактивен",
+            "Diplomata": "Окончил",
+            "Sospesa": "Приостановлен"
+        },
+        "languagePreference": {
+            "Italiano": "Итальянский",
+            "English": "Английский",
+            "Russian": "Русский"
+        },
+        "educationLevel": {
+            "Licenza media": "Средняя школа",
+            "Diploma": "Аттестат / Колледж",
+            "Laurea": "Высшее образование"
+        }
+    }
+}

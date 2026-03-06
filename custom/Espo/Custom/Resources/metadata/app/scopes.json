@@ -1,0 +1,24 @@
+{
+    "Course": {
+        "entity": true,
+        "type": "Base",
+        "custom": true,
+        "tab": true
+    },
+    "CourseSection": {
+        "entity": true,
+        "type": "Base",
+        "custom": true
+    },
+    "CourseAccess": {
+        "entity": true,
+        "type": "Base",
+        "custom": true
+    },
+    "Student": {
+        "entity": true,
+        "type": "Base",
+        "custom": true,
+        "tab": true
+    }
+}

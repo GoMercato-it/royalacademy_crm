@@ -1,0 +1,48 @@
+{
+    "labels": {
+        "Create Student": "Create Student"
+    },
+    "fields": {
+        "name": "Full Name",
+        "email": "Email",
+        "phone": "Phone",
+        "status": "Status",
+        "description": "Description",
+        "firstName": "First Name",
+        "lastName": "Last Name",
+        "dateOfBirth": "Date of Birth",
+        "address": "Address",
+        "city": "City",
+        "country": "Country",
+        "languagePreference": "Language Preference",
+        "enrollmentDate": "Enrollment Date",
+        "notes": "Notes",
+        "emergencyContact": "Emergency Contact",
+        "emergencyPhone": "Emergency Phone",
+        "educationLevel": "Education Level",
+        "previousExperience": "Previous Experience",
+        "instagram": "Instagram",
+        "portfolioUrl": "Portfolio URL",
+        "profilePhotoKey": "Profile Photo",
+        "courseAccesses": "Assigned Courses"
+    },
+    "links": [],
+    "options": {
+        "status": {
+            "Attiva": "Active",
+            "Inattiva": "Inactive",
+            "Diplomata": "Graduated",
+            "Sospesa": "Suspended"
+        },
+        "languagePreference": {
+            "Italiano": "Italian",
+            "English": "English",
+            "Russian": "Russian"
+        },
+        "educationLevel": {
+            "Licenza media": "Middle School",
+            "Diploma": "High School Diploma",
+            "Laurea": "Bachelor's / Master's Degree"
+        }
+    }
+}

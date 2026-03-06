@@ -1,0 +1,16 @@
+{
+    "labels": {
+        "Create CourseSection": "Create Course Section"
+    },
+    "fields": {
+        "name": "Name",
+        "description": "Description",
+        "course": "Course",
+        "order": "Order",
+        "pdfMinioKey": "PDF Document",
+        "startPage": "Start Page",
+        "endPage": "End Page",
+        "isActive": "Is Active"
+    },
+    "links": []
+}

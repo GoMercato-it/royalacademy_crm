@@ -1,0 +1,21 @@
+[
+    {
+        "rows": [
+            [
+                {
+                    "name": "name"
+                }
+            ],
+            [
+                {
+                    "name": "student"
+                }
+            ],
+            [
+                {
+                    "name": "course"
+                }
+            ]
+        ]
+    }
+]

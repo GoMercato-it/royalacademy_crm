@@ -1,0 +1,23 @@
+[
+    {
+        "name": "firstName",
+        "link": true,
+        "width": 25
+    },
+    {
+        "name": "lastName",
+        "link": true,
+        "width": 25
+    },
+    {
+        "name": "email",
+        "width": 20
+    },
+    {
+        "name": "phone",
+        "width": 18
+    },
+    {
+        "name": "status"
+    }
+]
