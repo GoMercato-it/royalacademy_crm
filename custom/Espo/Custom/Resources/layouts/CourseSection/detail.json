@@ -26,6 +26,12 @@
             ],
             [
                 {
+                    "name": "pdfFile"
+                },
+                false
+            ],
+            [
+                {
                     "name": "startPage"
                 },
                 {

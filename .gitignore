@@ -26,3 +26,4 @@ test_*.json
 # DDEV Environment Swapping
 .ddev/docker-compose.active-*
 
+node_modules/

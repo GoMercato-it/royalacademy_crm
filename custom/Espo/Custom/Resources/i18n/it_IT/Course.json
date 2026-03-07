@@ -10,10 +10,12 @@
         "description": "Descrizione",
         "durationHours": "Durata (Ore)",
         "coverImageKey": "Immagine di Copertina",
-        "sections": "Sezioni",
+        "sections": "Sezioni Corso",
         "courseAccesses": "Accessi Studenti"
     },
-    "links": [],
+    "links": {
+        "sections": "Sezioni Corso"
+    },
     "options": {
         "status": {
             "Bozza": "Bozza",
