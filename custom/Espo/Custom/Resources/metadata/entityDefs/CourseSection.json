@@ -54,6 +54,12 @@
         "isActive": {
             "type": "bool",
             "default": true
+        },
+        "pdfFile": {
+            "type": "file",
+            "accept": [
+                "application/pdf"
+            ]
         }
     },
     "links": {
@@ -79,6 +85,11 @@
             "type": "belongsTo",
             "entity": "Course",
             "foreign": "sections"
+        },
+        "pdfFile": {
+            "type": "belongsTo",
+            "entity": "Attachment",
+            "foreign": null
         }
     },
     "collection": {

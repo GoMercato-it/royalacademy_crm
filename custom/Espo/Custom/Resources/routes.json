@@ -95,5 +95,21 @@
       "controller": "CsvLeadImport",
       "action": "resetCounter"
     }
+  },
+  {
+    "route": "/CourseSectionPdf/:id/url",
+    "method": "get",
+    "params": {
+      "controller": "CourseSectionPdf",
+      "action": "url"
+    }
+  },
+  {
+    "route": "/CourseSectionPdf/:id/stream",
+    "method": "get",
+    "params": {
+      "controller": "CourseSectionPdf",
+      "action": "stream"
+    }
   }
 ]

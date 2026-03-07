@@ -20,22 +20,31 @@ class UploadPdfToMinio implements AfterSave
 
     public function afterSave(Entity $entity, SaveOptions $options): void
     {
-        echo "HOOK UploadPdfToMinio Triggered!\n";
-        $tmpPath = $entity->pdfTmpPath ?? $entity->get('_pdfTmpPath');
-        $filename = $entity->pdfFilename ?? $entity->get('_pdfFilename');
-
-        if (!$tmpPath || !file_exists($tmpPath)) {
-            echo "HOOK ABORTED: No tmp path or file missing! _pdfTmpPath: " . var_export($tmpPath, true) . "\n";
+        if (!$entity->isAttributeChanged('pdfFileId')) {
             return;
         }
 
-        echo "HOOK UPLOADING TO MINIO...\n";
-        $key = $this->minioService->upload($entity, $tmpPath, $filename);
+        $attachmentId = $entity->get('pdfFileId');
+        if (!$attachmentId) {
+            return;
+        }
 
-        // Salva la key e pulisci il file locale
+        $attachment = $this->entityManager->getEntityById('Attachment', $attachmentId);
+        if (!$attachment) {
+            return;
+        }
+
+        $localFilePath = 'data/upload/' . $attachmentId;
+        if (!file_exists($localFilePath)) {
+            return;
+        }
+
+        $filename = $attachment->get('name') ?: 'document.pdf';
+
+        // Uses CourseSection's Uploadable interface (getBucketName, getObjectKey)
+        $key = $this->minioService->upload($entity, $localFilePath, $filename);
+
         $entity->set('pdfMinioKey', $key);
         $this->entityManager->saveEntity($entity, [SaveOption::SKIP_HOOKS => true]);
-
-        unlink($tmpPath);
     }
 }

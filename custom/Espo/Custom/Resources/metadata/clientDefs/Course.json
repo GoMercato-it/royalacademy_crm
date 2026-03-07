@@ -1,4 +1,10 @@
 {
     "controller": "controllers/record",
-    "iconClass": "fas fa-graduation-cap"
+    "iconClass": "fas fa-graduation-cap",
+    "relationshipPanels": {
+        "sections": {
+            "layout": null,
+            "selectPrimaryFilterName": null
+        }
+    }
 }

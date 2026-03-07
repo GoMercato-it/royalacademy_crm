@@ -1,4 +1,21 @@
 {
     "controller": "controllers/record",
-    "iconClass": "fas fa-book-open"
+    "iconClass": "fas fa-book-open",
+    "relationshipPanels": {
+        "course": {
+            "layout": null,
+            "selectPrimaryFilterName": null
+        }
+    },
+    "bottomPanels": {
+        "detail": [
+            {
+                "name": "pdfViewer",
+                "label": "PDF Reader",
+                "view": "custom:views/course-section/pdf-viewer",
+                "order": 1,
+                "sticked": false
+            }
+        ]
+    }
 }

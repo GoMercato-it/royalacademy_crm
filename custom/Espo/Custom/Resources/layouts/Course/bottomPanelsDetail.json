@@ -1,8 +1,12 @@
-[
-    {
-        "name": "sections"
+{
+    "_delimiter_": {
+        "disabled": true
     },
-    {
-        "name": "courseAccesses"
+    "stream": {
+        "sticked": false,
+        "index": 0
+    },
+    "sections": {
+        "index": 1
     }
-]
+}

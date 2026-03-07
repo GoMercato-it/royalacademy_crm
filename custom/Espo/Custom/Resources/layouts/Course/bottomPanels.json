@@ -1,0 +1,10 @@
+[
+    {
+        "name": "sections",
+        "label": "Course Sections"
+    },
+    {
+        "name": "courseAccesses",
+        "label": "Course Accesses"
+    }
+]

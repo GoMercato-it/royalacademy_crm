@@ -41,6 +41,19 @@ class MinioService
     }
 
     /**
+     * Scarica il contenuto di un file da MinIO.
+     */
+    public function getFileContent(string $bucket, string $key): string
+    {
+        $result = $this->client->getObject([
+            'Bucket' => $bucket,
+            'Key' => $key,
+        ]);
+
+        return (string) $result['Body'];
+    }
+
+    /**
      * Ritorna URL presigned valido $expirySeconds secondi.
      */
     public function getPresignedUrl(string $bucket, string $key, int $expirySeconds = 3600): string
