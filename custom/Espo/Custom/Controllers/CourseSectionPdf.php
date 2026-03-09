@@ -6,6 +6,7 @@ use Espo\Core\Api\Response;
 use Espo\Core\Exceptions\Forbidden;
 use Espo\Core\Exceptions\NotFound;
 use Espo\ORM\EntityManager;
+use Espo\ORM\Entity;
 use Espo\Entities\User;
 use Espo\Custom\Services\MinioService;
 
@@ -16,6 +17,75 @@ class CourseSectionPdf
         private MinioService $minioService,
         private User $user
     ) {
+    }
+
+    /**
+     * Verify that the current user has access to the course section.
+     * Access is granted if:
+     * 1. User is admin, OR
+     * 2. Student has an active CourseAccess record for the course, OR
+     * 3. User belongs to a Team assigned to the course's studentTeams
+     */
+    private function checkAccess(Entity $section): void
+    {
+        if ($this->user->isAdmin()) {
+            return;
+        }
+
+        $userId = $this->user->getId();
+        $courseId = $section->get('courseId');
+
+        // Check 1: direct CourseAccess record
+        $student = $this->entityManager
+            ->getRDBRepository('Student')
+            ->where(['userId' => $userId])
+            ->findOne();
+
+        if ($student) {
+            $access = $this->entityManager
+                ->getRDBRepository('CourseAccess')
+                ->where([
+                    'courseId' => $courseId,
+                    'studentId' => $student->getId(),
+                    'isActive' => true,
+                ])
+                ->findOne();
+
+            if ($access) {
+                return;
+            }
+        }
+
+        // Check 2: team membership — user is in a Team assigned to the course
+        $course = $this->entityManager->getEntityById('Course', $courseId);
+        if ($course) {
+            // Get team IDs assigned to this course via standard teams link
+            $courseTeams = $this->entityManager
+                ->getRDBRepository('Course')
+                ->getRelation($course, 'teams')
+                ->find();
+
+            $courseTeamIds = [];
+            foreach ($courseTeams as $team) {
+                $courseTeamIds[] = $team->getId();
+            }
+
+            if (!empty($courseTeamIds)) {
+                // Get teams the current user belongs to
+                $userTeams = $this->entityManager
+                    ->getRDBRepository('User')
+                    ->getRelation($this->user, 'teams')
+                    ->find();
+
+                foreach ($userTeams as $userTeam) {
+                    if (in_array($userTeam->getId(), $courseTeamIds)) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        throw new Forbidden('No active course access.');
     }
 
     /**
@@ -31,37 +101,13 @@ class CourseSectionPdf
             throw new NotFound('Section not found or inactive.');
         }
 
-        if (!$this->user->isAdmin()) {
-            $userId = $this->user->getId();
-            $student = $this->entityManager
-                ->getRDBRepository('Student')
-                ->where(['userId' => $userId])
-                ->findOne();
-
-            if (!$student) {
-                throw new Forbidden('No student profile found.');
-            }
-
-            $access = $this->entityManager
-                ->getRDBRepository('CourseAccess')
-                ->where([
-                    'courseId' => $section->get('courseId'),
-                    'studentId' => $student->getId(),
-                    'isActive' => true,
-                ])
-                ->findOne();
-
-            if (!$access) {
-                throw new Forbidden('No active course access.');
-            }
-        }
+        $this->checkAccess($section);
 
         $pdfMinioKey = $section->get('pdfMinioKey');
         if (!$pdfMinioKey) {
             throw new NotFound('No PDF uploaded for this section.');
         }
 
-        // Return proxy URL pointing back to our own server
         return (object) [
             'url' => 'api/v1/CourseSectionPdf/' . $id . '/stream',
             'startPage' => $section->get('startPage'),
@@ -82,31 +128,7 @@ class CourseSectionPdf
             throw new NotFound('Section not found or inactive.');
         }
 
-        // Same access control
-        if (!$this->user->isAdmin()) {
-            $userId = $this->user->getId();
-            $student = $this->entityManager
-                ->getRDBRepository('Student')
-                ->where(['userId' => $userId])
-                ->findOne();
-
-            if (!$student) {
-                throw new Forbidden('No student profile found.');
-            }
-
-            $access = $this->entityManager
-                ->getRDBRepository('CourseAccess')
-                ->where([
-                    'courseId' => $section->get('courseId'),
-                    'studentId' => $student->getId(),
-                    'isActive' => true,
-                ])
-                ->findOne();
-
-            if (!$access) {
-                throw new Forbidden('No active course access.');
-            }
-        }
+        $this->checkAccess($section);
 
         $pdfMinioKey = $section->get('pdfMinioKey');
         if (!$pdfMinioKey) {
@@ -115,7 +137,6 @@ class CourseSectionPdf
 
         $bucket = getenv('MINIO_BUCKET') ?: 'royal-academy-courses';
 
-        // Get the file content from MinIO
         $content = $this->minioService->getFileContent($bucket, $pdfMinioKey);
 
         $response->setHeader('Content-Type', 'application/pdf');

@@ -80,7 +80,8 @@
                 "Attiva",
                 "Inattiva",
                 "Diplomata",
-                "Sospesa"
+                "Sospesa",
+                "Espulsa"
             ]
         },
         "notes": {

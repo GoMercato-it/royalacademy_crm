@@ -31,5 +31,16 @@
                 }
             ]
         ]
+    },
+    {
+        "label": "Studenti",
+        "rows": [
+            [
+                {
+                    "name": "teams",
+                    "fullWidth": true
+                }
+            ]
+        ]
     }
 ]
