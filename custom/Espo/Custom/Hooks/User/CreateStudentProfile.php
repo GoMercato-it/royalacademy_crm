@@ -29,7 +29,7 @@ class CreateStudentProfile implements AfterSave
 
         $studentRole = $this->entityManager
             ->getRDBRepository('Role')
-            ->where(['name' => 'StudentRole'])
+            ->where(['name' => 'Student'])
             ->findOne();
 
         if (!$studentRole || !in_array($studentRole->getId(), $rolesIds)) {

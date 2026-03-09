@@ -223,9 +223,41 @@ define(["view"], function (View) {
             state.currentPage = state.startPage;
 
             var xhr = new XMLHttpRequest();
-            xhr.open("GET", data.url, true);
+            // Detect portal context and build correct API URL
+            // In portal: /api/v1/portal-access/{PORTAL_ID}/CourseSectionPdf/ID/stream
+            // In admin:  /api/v1/CourseSectionPdf/ID/stream
+            var loc = window.location.pathname;
+            var portalMatch = loc.match(/\/portal\/([^/]+)\//);
+            var apiBase = portalMatch
+              ? '/api/v1/portal-access/' + portalMatch[1] + '/'
+              : '/api/v1/';
+            var streamUrl = apiBase + 'CourseSectionPdf/' + self.sectionId + '/stream';
+            xhr.open("GET", streamUrl, true);
             xhr.responseType = "arraybuffer";
             xhr.setRequestHeader("X-Requested-With", "XMLHttpRequest");
+            // Send same auth headers that Espo.Ajax uses internally
+            // The auth string (base64 of username:token) is stored in localStorage
+            var authString = localStorage.getItem('user-auth') || localStorage.getItem('auth');
+            if (!authString) {
+              // Try EspoCRM's storage format: key = "user" + "-" + "auth"
+              try {
+                for (var k = 0; k < localStorage.length; k++) {
+                  var lsKey = localStorage.key(k);
+                  if (lsKey && lsKey.indexOf('auth') !== -1) {
+                    var val = localStorage.getItem(lsKey);
+                    if (val && val.length > 20 && val.indexOf('{') === -1) {
+                      authString = val;
+                      break;
+                    }
+                  }
+                }
+              } catch(e) {}
+            }
+            if (authString) {
+              xhr.setRequestHeader("Authorization", "Basic " + authString);
+              xhr.setRequestHeader("Espo-Authorization", authString);
+              xhr.setRequestHeader("Espo-Authorization-By-Token", "true");
+            }
 
             xhr.onload = function () {
               if (xhr.status === 200) {
@@ -269,10 +301,10 @@ define(["view"], function (View) {
         return;
       }
       var script = document.createElement("script");
-      script.src = "client/custom/lib/pdf.min.js";
+      script.src = "/client/custom/lib/pdf.min.js";
       script.onload = function () {
         if (window.pdfjsLib) {
-          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "client/custom/lib/pdf.worker.min.js";
+          window.pdfjsLib.GlobalWorkerOptions.workerSrc = "/client/custom/lib/pdf.worker.min.js";
           callback();
         }
       };
