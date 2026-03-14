@@ -1,22 +1,47 @@
-<div style="text-align: center; padding: 24px 16px;">
-    <button data-action="openReader" class="btn btn-primary" style="
-        background: linear-gradient(135deg, #e94560 0%, #0f3460 100%);
-        border: none;
-        padding: 18px 48px;
-        font-size: 17px;
-        font-weight: 600;
-        border-radius: 12px;
-        letter-spacing: 0.5px;
-        box-shadow: 0 6px 24px rgba(233, 69, 96, 0.35);
-        transition: all 0.3s ease;
+<style>
+    .course-section-pdf-reader-wrap {
+        text-align: center;
+        padding: 16px 12px;
+    }
+
+    .course-section-pdf-open-btn {
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        gap: 10px;
-        line-height: 1;
-        min-height: 56px;
-    ">
-        <i class="fas fa-book-reader" style="font-size: 20px;"></i>
+        gap: 8px;
+        min-height: 38px;
+        max-width: 100%;
+        padding: 8px 16px;
+        border-radius: 8px;
+        font-size: 14px;
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: 0.1px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .course-section-pdf-open-btn:hover,
+    .course-section-pdf-open-btn:focus {
+        transform: translateY(-1px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .course-section-pdf-open-btn .fas {
+        font-size: 14px;
+    }
+
+    @media (max-width: 576px) {
+        .course-section-pdf-open-btn {
+            width: 100%;
+            padding: 10px 12px;
+        }
+    }
+</style>
+
+<div class="course-section-pdf-reader-wrap">
+    <button data-action="openReader" class="btn btn-primary course-section-pdf-open-btn">
+        <i class="fas fa-book-reader"></i>
         Leggi i materiali di studio
     </button>
     {{#unless hasPdf}}
