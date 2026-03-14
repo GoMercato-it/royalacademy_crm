@@ -330,6 +330,9 @@ define(["view"], function (View) {
         '      <span id="pdf-zoom-level">100%</span>' +
         '      <button class="pdf-btn" id="pdf-zoom-in" title="Zoom In"><i class="fas fa-search-plus"></i></button>' +
         '      <span class="pdf-separator">|</span>' +
+        '      <button class="pdf-btn" id="pdf-theme-toggle" title="Tema scuro"><i class="fas fa-moon"></i></button>' +
+        '      <button class="pdf-btn" id="pdf-fullscreen-toggle" title="Schermo intero"><i class="fas fa-expand"></i></button>' +
+        '      <span class="pdf-separator">|</span>' +
         '      <span id="pdf-page-info">Caricamento...</span>' +
         '      <span class="pdf-separator">|</span>' +
         '      <button class="pdf-btn pdf-btn-close" id="pdf-close" title="Chiudi"><i class="fas fa-times"></i></button>' +
@@ -340,8 +343,14 @@ define(["view"], function (View) {
         '  </div>' +
         '</div>';
 
+      var overlayContainer = null;
+      var navHandler = null;
+      var escHandler = null;
+      var fullscreenChangeHandler = null;
+
       document.body.appendChild(overlay);
       document.body.style.overflow = "hidden";
+      overlayContainer = overlay.querySelector(".pdf-overlay-container");
 
       if (!document.getElementById("pdf-overlay-styles")) {
         var style = document.createElement("style");
@@ -357,24 +366,103 @@ define(["view"], function (View) {
         startPage: 1,
         endPage: 9999,
         pdfDoc: null,
+        theme: this.getPreferredReaderTheme(),
       };
 
       var container = overlay.querySelector("#pdf-pages-container");
+      var themeToggleButton = overlay.querySelector("#pdf-theme-toggle");
+      var fullscreenToggleButton = overlay.querySelector("#pdf-fullscreen-toggle");
+
+      var syncThemeToggleButton = function () {
+        if (state.theme === "dark") {
+          themeToggleButton.innerHTML = '<i class="fas fa-sun"></i>';
+          themeToggleButton.title = "Tema chiaro";
+        } else {
+          themeToggleButton.innerHTML = '<i class="fas fa-moon"></i>';
+          themeToggleButton.title = "Tema scuro";
+        }
+      };
+
+      var applyTheme = function (theme) {
+        state.theme = theme === "dark" ? "dark" : "light";
+        overlay.setAttribute("data-theme", state.theme);
+        self.persistReaderTheme(state.theme);
+        syncThemeToggleButton();
+      };
+
+      var syncFullscreenToggleButton = function () {
+        var isFullscreen = document.fullscreenElement === overlayContainer;
+        if (isFullscreen) {
+          fullscreenToggleButton.innerHTML = '<i class="fas fa-compress"></i>';
+          fullscreenToggleButton.title = "Esci da schermo intero";
+        } else {
+          fullscreenToggleButton.innerHTML = '<i class="fas fa-expand"></i>';
+          fullscreenToggleButton.title = "Schermo intero";
+        }
+      };
+
+      var closeOverlay = function () {
+        if (escHandler) {
+          document.removeEventListener("keydown", escHandler);
+        }
+        if (navHandler) {
+          document.removeEventListener("keydown", navHandler);
+        }
+        if (fullscreenChangeHandler) {
+          document.removeEventListener("fullscreenchange", fullscreenChangeHandler);
+        }
+        self.closeFullscreen(overlay);
+      };
+
+      applyTheme(state.theme);
+      syncFullscreenToggleButton();
 
       // Close handlers
       overlay.querySelector("#pdf-close").addEventListener("click", function () {
-        self.closeFullscreen(overlay);
+        closeOverlay();
       });
       overlay.querySelector(".pdf-overlay-backdrop").addEventListener("click", function () {
-        self.closeFullscreen(overlay);
+        closeOverlay();
       });
-      var escHandler = function (e) {
+      escHandler = function (e) {
         if (e.key === "Escape") {
-          self.closeFullscreen(overlay);
-          document.removeEventListener("keydown", escHandler);
+          if (document.fullscreenElement === overlayContainer && document.exitFullscreen) {
+            document.exitFullscreen();
+            return;
+          }
+          closeOverlay();
         }
       };
       document.addEventListener("keydown", escHandler);
+
+      // Reader theme toggle
+      themeToggleButton.addEventListener("click", function () {
+        applyTheme(state.theme === "dark" ? "light" : "dark");
+      });
+
+      // Browser fullscreen toggle
+      fullscreenToggleButton.addEventListener("click", function () {
+        if (document.fullscreenElement === overlayContainer) {
+          if (document.exitFullscreen) {
+            document.exitFullscreen();
+          }
+          return;
+        }
+        if (overlayContainer.requestFullscreen) {
+          var fullscreenRequest = overlayContainer.requestFullscreen();
+          if (fullscreenRequest && typeof fullscreenRequest.catch === "function") {
+            fullscreenRequest.catch(function () {
+              // Ignore the browser rejection (user settings, policy, etc.).
+            });
+          }
+        }
+      });
+
+      fullscreenChangeHandler = function () {
+        syncFullscreenToggleButton();
+        rerender();
+      };
+      document.addEventListener("fullscreenchange", fullscreenChangeHandler);
 
       // Zoom
       overlay.querySelector("#pdf-zoom-in").addEventListener("click", function () {
@@ -421,7 +509,7 @@ define(["view"], function (View) {
       });
 
       // Keyboard navigation for single mode
-      document.addEventListener("keydown", function navHandler(e) {
+      navHandler = function (e) {
         if (!overlay.parentNode) {
           document.removeEventListener("keydown", navHandler);
           return;
@@ -438,7 +526,8 @@ define(["view"], function (View) {
             renderSinglePage();
           }
         }
-      });
+      };
+      document.addEventListener("keydown", navHandler);
 
       function getContainerWidth() {
         return container.clientWidth - 48; // minus padding
@@ -593,7 +682,54 @@ define(["view"], function (View) {
       document.head.appendChild(script);
     },
 
+    getPreferredReaderTheme: function () {
+      try {
+        var storedTheme = localStorage.getItem("course-section-pdf-reader-theme");
+        if (storedTheme === "light" || storedTheme === "dark") {
+          return storedTheme;
+        }
+      } catch (e) {
+        // No-op: localStorage can be blocked by the browser.
+      }
+
+      var body = document.body || {};
+      var root = document.documentElement || {};
+      var darkHint =
+        (body.className && body.className.indexOf("dark") !== -1) ||
+        (root.className && root.className.indexOf("dark") !== -1);
+
+      return darkHint ? "dark" : "light";
+    },
+
+    persistReaderTheme: function (theme) {
+      try {
+        localStorage.setItem(
+          "course-section-pdf-reader-theme",
+          theme === "dark" ? "dark" : "light",
+        );
+      } catch (e) {
+        // No-op: localStorage can be blocked by the browser.
+      }
+    },
+
     closeFullscreen: function (overlay) {
+      var activeFullscreenElement = document.fullscreenElement;
+      if (
+        activeFullscreenElement &&
+        overlay &&
+        (activeFullscreenElement === overlay ||
+          (typeof overlay.contains === "function" &&
+            overlay.contains(activeFullscreenElement))) &&
+        document.exitFullscreen
+      ) {
+        var fullscreenExit = document.exitFullscreen();
+        if (fullscreenExit && typeof fullscreenExit.catch === "function") {
+          fullscreenExit.catch(function () {
+            // Ignore if browser denies exiting fullscreen for any reason.
+          });
+        }
+      }
+
       if (overlay && overlay.parentNode) {
         overlay.parentNode.removeChild(overlay);
       }
@@ -602,87 +738,223 @@ define(["view"], function (View) {
 
     getStyles: function () {
       return [
-        // Overlay
         "#pdf-fullscreen-overlay {",
-        "  position:fixed; top:0; left:0; width:100vw; height:100vh;",
-        "  z-index:100000; display:flex; align-items:center; justify-content:center;",
+        "  --pdf-accent:#4b77be;",
+        "  --pdf-danger:#d85c5a;",
+        "  --pdf-text:#2f3a4b;",
+        "  --pdf-muted:#6c7788;",
+        "  --pdf-border:#dbe3ee;",
+        "  --pdf-header-bg:#ffffff;",
+        "  --pdf-panel-bg:#ffffff;",
+        "  --pdf-body-bg:#f3f6fb;",
+        "  --pdf-btn-bg:#f3f6fb;",
+        "  --pdf-btn-hover:#e8eef8;",
+        "  --pdf-shadow:0 22px 58px rgba(15, 23, 42, 0.28);",
+        "  position:fixed;",
+        "  top:0;",
+        "  left:0;",
+        "  width:100vw;",
+        "  height:100vh;",
+        "  z-index:100000;",
+        "  display:flex;",
+        "  align-items:center;",
+        "  justify-content:center;",
+        "}",
+        "#pdf-fullscreen-overlay[data-theme='dark'] {",
+        "  --pdf-accent:#7aa2ff;",
+        "  --pdf-danger:#ef7d7b;",
+        "  --pdf-text:#e8eef9;",
+        "  --pdf-muted:#a6b4c9;",
+        "  --pdf-border:#35435c;",
+        "  --pdf-header-bg:#1a2230;",
+        "  --pdf-panel-bg:#161d2a;",
+        "  --pdf-body-bg:#101722;",
+        "  --pdf-btn-bg:#222d3d;",
+        "  --pdf-btn-hover:#2b3a51;",
+        "  --pdf-shadow:0 26px 70px rgba(0, 0, 0, 0.62);",
         "}",
         ".pdf-overlay-backdrop {",
-        "  position:absolute; top:0; left:0; width:100%; height:100%;",
-        "  background:rgba(0,0,0,0.88); backdrop-filter:blur(10px);",
+        "  position:absolute;",
+        "  top:0;",
+        "  left:0;",
+        "  width:100%;",
+        "  height:100%;",
+        "  background:rgba(15, 23, 42, 0.58);",
+        "  backdrop-filter:blur(4px);",
         "}",
-        // Container
         ".pdf-overlay-container {",
-        "  position:relative; width:96vw; height:96vh;",
-        "  background:#1a1a2e; border-radius:16px;",
-        "  box-shadow:0 25px 80px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08);",
-        "  display:flex; flex-direction:column; overflow:hidden;",
+        "  position:relative;",
+        "  width:min(96vw, 1700px);",
+        "  height:96vh;",
+        "  background:var(--pdf-panel-bg);",
+        "  border-radius:14px;",
+        "  border:1px solid var(--pdf-border);",
+        "  box-shadow:var(--pdf-shadow);",
+        "  display:flex;",
+        "  flex-direction:column;",
+        "  overflow:hidden;",
         "}",
-        // Header
         ".pdf-overlay-header {",
-        "  display:flex; align-items:center; justify-content:space-between;",
-        "  padding:12px 20px; background:linear-gradient(135deg,#16213e 0%,#0f3460 100%);",
-        "  border-bottom:1px solid rgba(255,255,255,0.1); flex-shrink:0;",
+        "  display:flex;",
+        "  align-items:center;",
+        "  justify-content:space-between;",
+        "  gap:14px;",
+        "  padding:10px 14px;",
+        "  background:var(--pdf-header-bg);",
+        "  border-bottom:1px solid var(--pdf-border);",
+        "  color:var(--pdf-text);",
+        "  flex-shrink:0;",
         "}",
         ".pdf-header-title {",
-        "  display:flex; align-items:center; gap:10px; color:#e8e8e8;",
-        "  font-size:16px; font-weight:600;",
+        "  display:flex;",
+        "  align-items:center;",
+        "  gap:8px;",
+        "  color:var(--pdf-text);",
+        "  font-size:15px;",
+        "  font-weight:600;",
+        "  min-width:0;",
         "}",
-        ".pdf-header-title i { color:#e94560; font-size:20px; }",
+        ".pdf-header-title i { color:var(--pdf-accent); font-size:16px; }",
+        ".pdf-header-title span {",
+        "  overflow:hidden;",
+        "  text-overflow:ellipsis;",
+        "  white-space:nowrap;",
+        "}",
         ".pdf-header-controls {",
-        "  display:flex; align-items:center; gap:6px; color:#ccc; font-size:13px;",
+        "  display:flex;",
+        "  align-items:center;",
+        "  gap:6px;",
+        "  color:var(--pdf-muted);",
+        "  font-size:12px;",
+        "  flex-wrap:wrap;",
+        "  justify-content:flex-end;",
         "}",
-        ".pdf-separator { color:rgba(255,255,255,0.15); margin:0 2px; }",
-        // Buttons
+        ".pdf-separator { color:var(--pdf-border); margin:0 2px; }",
         ".pdf-btn {",
-        "  background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12);",
-        "  color:#e8e8e8; width:34px; height:34px; border-radius:8px;",
-        "  cursor:pointer; display:flex; align-items:center; justify-content:center;",
-        "  transition:all 0.2s ease; font-size:13px;",
+        "  width:34px;",
+        "  height:34px;",
+        "  border-radius:8px;",
+        "  border:1px solid var(--pdf-border);",
+        "  background:var(--pdf-btn-bg);",
+        "  color:var(--pdf-text);",
+        "  cursor:pointer;",
+        "  display:flex;",
+        "  align-items:center;",
+        "  justify-content:center;",
+        "  transition:background-color 0.18s ease, transform 0.18s ease;",
+        "  font-size:13px;",
         "}",
-        ".pdf-btn:hover { background:rgba(255,255,255,0.18); transform:scale(1.05); }",
-        ".pdf-btn-close { background:rgba(233,69,96,0.2); border-color:rgba(233,69,96,0.3); }",
-        ".pdf-btn-close:hover { background:rgba(233,69,96,0.4); }",
-        // View toggle
-        ".pdf-view-toggle { display:flex; gap:2px; background:rgba(0,0,0,0.3); border-radius:8px; padding:2px; }",
+        ".pdf-btn:hover { background:var(--pdf-btn-hover); transform:translateY(-1px); }",
+        ".pdf-btn:focus { outline:none; box-shadow:0 0 0 2px rgba(75, 119, 190, 0.28); }",
+        ".pdf-btn-close {",
+        "  background:var(--pdf-danger);",
+        "  border-color:var(--pdf-danger);",
+        "  color:#ffffff;",
+        "}",
+        ".pdf-btn-close:hover { filter:brightness(0.94); }",
+        ".pdf-view-toggle {",
+        "  display:flex;",
+        "  gap:3px;",
+        "  border:1px solid var(--pdf-border);",
+        "  background:var(--pdf-body-bg);",
+        "  border-radius:9px;",
+        "  padding:2px;",
+        "}",
         ".pdf-view-btn { border:none; background:transparent; border-radius:6px; }",
-        ".pdf-view-btn.active { background:rgba(233,69,96,0.5); border-color:rgba(233,69,96,0.6); }",
-        // Single nav
+        ".pdf-view-btn.active {",
+        "  background:var(--pdf-accent);",
+        "  color:#fff;",
+        "  box-shadow:0 2px 6px rgba(15, 23, 42, 0.2);",
+        "}",
         ".pdf-nav-single { display:flex; align-items:center; gap:6px; }",
-        "#pdf-zoom-level { min-width:44px; text-align:center; font-weight:500; }",
-        // Body - scroll mode
+        "#pdf-current-page, #pdf-zoom-level {",
+        "  min-width:48px;",
+        "  text-align:center;",
+        "  font-weight:600;",
+        "  color:var(--pdf-text);",
+        "}",
+        "#pdf-page-info { color:var(--pdf-muted); font-weight:500; }",
         ".pdf-overlay-body {",
-        "  flex:1; overflow-y:auto; overflow-x:hidden; padding:24px;",
-        "  display:flex; flex-direction:column; align-items:center; gap:12px;",
-        "  background:#12121c;",
-        "  scrollbar-width:thin; scrollbar-color:#333 transparent;",
+        "  flex:1;",
+        "  overflow-y:auto;",
+        "  overflow-x:hidden;",
+        "  padding:20px;",
+        "  display:flex;",
+        "  flex-direction:column;",
+        "  align-items:center;",
+        "  gap:12px;",
+        "  background:var(--pdf-body-bg);",
+        "  scrollbar-width:thin;",
+        "  scrollbar-color:var(--pdf-border) transparent;",
         "}",
         ".pdf-overlay-body::-webkit-scrollbar { width:8px; }",
         ".pdf-overlay-body::-webkit-scrollbar-track { background:transparent; }",
-        ".pdf-overlay-body::-webkit-scrollbar-thumb { background:#444; border-radius:4px; }",
-        // Body - single mode
-        ".pdf-mode-single {",
-        "  justify-content:center; align-items:center;",
+        ".pdf-overlay-body::-webkit-scrollbar-thumb {",
+        "  background:var(--pdf-border);",
+        "  border-radius:4px;",
         "}",
-        // Pages
+        ".pdf-mode-single { justify-content:center; align-items:center; }",
         ".pdf-page-wrapper {",
-        "  position:relative; background:#fff; border-radius:4px; overflow:hidden;",
-        "  box-shadow:0 4px 24px rgba(0,0,0,0.5); flex-shrink:0;",
+        "  position:relative;",
+        "  background:#fff;",
+        "  border-radius:6px;",
+        "  border:1px solid rgba(17, 24, 39, 0.08);",
+        "  overflow:hidden;",
+        "  box-shadow:0 10px 28px rgba(17, 24, 39, 0.2);",
+        "  flex-shrink:0;",
+        "}",
+        "#pdf-fullscreen-overlay[data-theme='dark'] .pdf-page-wrapper {",
+        "  border-color:rgba(255, 255, 255, 0.08);",
+        "  box-shadow:0 12px 34px rgba(0, 0, 0, 0.45);",
         "}",
         ".pdf-page-wrapper canvas {",
-        "  display:block; user-select:none; -webkit-user-select:none;",
-        "  pointer-events:none; max-width:100%;",
+        "  display:block;",
+        "  user-select:none;",
+        "  -webkit-user-select:none;",
+        "  pointer-events:none;",
+        "  max-width:100%;",
         "}",
         ".pdf-page-number {",
-        "  position:absolute; bottom:8px; right:12px;",
-        "  background:rgba(0,0,0,0.65); color:#fff; padding:3px 12px;",
-        "  border-radius:12px; font-size:11px; font-weight:500;",
+        "  position:absolute;",
+        "  bottom:8px;",
+        "  right:10px;",
+        "  background:rgba(17, 24, 39, 0.74);",
+        "  color:#fff;",
+        "  padding:3px 10px;",
+        "  border-radius:10px;",
+        "  font-size:11px;",
+        "  font-weight:500;",
         "}",
         ".pdf-loading {",
-        "  color:#888; font-size:16px; padding:60px;",
-        "  display:flex; align-items:center; gap:12px;",
+        "  color:var(--pdf-muted);",
+        "  font-size:15px;",
+        "  padding:54px;",
+        "  display:flex;",
+        "  align-items:center;",
+        "  gap:10px;",
         "}",
-        ".pdf-error { color:#e94560; }",
+        ".pdf-error { color:var(--pdf-danger); }",
+        "@media (max-width: 1080px) {",
+        "  .pdf-overlay-container {",
+        "    width:100vw;",
+        "    height:100vh;",
+        "    border-radius:0;",
+        "  }",
+        "}",
+        "@media (max-width: 768px) {",
+        "  .pdf-overlay-header {",
+        "    align-items:flex-start;",
+        "    flex-direction:column;",
+        "    gap:10px;",
+        "  }",
+        "  .pdf-header-controls {",
+        "    width:100%;",
+        "    justify-content:flex-start;",
+        "    row-gap:8px;",
+        "  }",
+        "  .pdf-separator { display:none; }",
+        "  .pdf-overlay-body { padding:12px; }",
+        "}",
       ].join("\n");
     },
   });
