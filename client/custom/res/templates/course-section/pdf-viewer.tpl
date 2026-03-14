@@ -1,4 +1,3 @@
-{{#if hasPdf}}
 <div style="text-align: center; padding: 24px 16px;">
     <button data-action="openReader" class="btn btn-primary" style="
         background: linear-gradient(135deg, #e94560 0%, #0f3460 100%);
@@ -20,10 +19,9 @@
         <i class="fas fa-book-reader" style="font-size: 20px;"></i>
         Leggi i materiali di studio
     </button>
+    {{#unless hasPdf}}
+    <div style="margin-top: 10px; color: #8a8a8a; font-size: 13px;">
+        Il materiale potrebbe essere ancora in sincronizzazione, riprova tra pochi secondi se necessario.
+    </div>
+    {{/unless}}
 </div>
-{{else}}
-<div style="text-align: center; padding: 24px; color: #888; font-size: 14px;">
-    <i class="fas fa-file-pdf" style="font-size: 28px; margin-bottom: 10px; display: block; opacity: 0.4;"></i>
-    Nessun PDF caricato per questa sezione.
-</div>
-{{/if}}

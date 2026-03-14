@@ -9,17 +9,296 @@ define(["view"], function (View) {
     },
 
     setup: function () {
-      this.sectionId = this.model ? this.model.id : this.options.sectionId;
+      this.sectionId = this.resolveSectionId();
+      this.sectionState = {
+        hasPdf: false,
+        hasUploadedPdfFile: false,
+        initialized: false,
+      };
+
+      this.pdfStateRefreshTimer = null;
+      this.pdfStateRefreshAttempts = 0;
+      this.maxPdfStateRefreshAttempts = 40;
+      this.pdfStateRefreshIntervalMs = 1500;
+
+      if (this.model) {
+        this.listenTo(this.model, "sync", this.handleModelStateChange.bind(this));
+        this.listenTo(this.model, "change:id", this.ensureSectionIdAndReload.bind(this));
+        this.listenTo(
+          this.model,
+          "change:pdfMinioKey change:pdfFileId change:pdfFileName",
+          this.handleModelStateChange.bind(this),
+        );
+      }
+
+      this.on("remove", function () {
+        this.stopPdfStateRefresh();
+      });
+
+      // Load the freshest section state once and poll briefly if PDF is still processing.
+      this.ensurePdfStateLoaded();
+    },
+
+    resolveSectionId: function () {
+      if (this.model && this.model.id) {
+        return this.model.id;
+      }
+
+      if (this.options && this.options.sectionId) {
+        return this.options.sectionId;
+      }
+
+      var hash = window.location.hash || "";
+      var match = hash.match(/#CourseSection\/view\/([a-zA-Z0-9]+)/);
+      if (match && match[1]) {
+        return match[1];
+      }
+
+      return null;
+    },
+
+    ensureSectionIdAndReload: function () {
+      var prevSectionId = this.sectionId;
+      this.sectionId = this.resolveSectionId();
+
+      if (!this.sectionId || this.sectionId === prevSectionId) {
+        return;
+      }
+
+      this.ensurePdfStateLoaded();
+    },
+
+    ensureRuntimeSectionId: function () {
+      if (this.sectionId) {
+        return this.sectionId;
+      }
+
+      var resolvedId = this.resolveSectionId();
+      if (!resolvedId) {
+        return null;
+      }
+
+      this.sectionId = resolvedId;
+      this.ensurePdfStateLoaded();
+
+      return this.sectionId;
     },
 
     data: function () {
+      var modelHasPdf = this.model && !!this.model.get("pdfMinioKey");
+      var hasPdf = modelHasPdf || !!this.sectionState.hasPdf;
+
       return {
-        hasPdf: this.model && !!this.model.get("pdfMinioKey"),
+        hasPdf: hasPdf,
       };
     },
 
+    hasUploadedPdfFile: function () {
+      if (this.sectionState.hasUploadedPdfFile) {
+        return true;
+      }
+
+      if (!this.model) {
+        return false;
+      }
+
+      return !!(
+        this.model.get("pdfFileId") ||
+        this.model.get("pdfFileName") ||
+        this.model.get("pdfFile")
+      );
+    },
+
+    handleModelStateChange: function () {
+      this.ensureSectionIdAndReload();
+
+      if (!this.model) {
+        return;
+      }
+
+      this.syncSectionState(this.model.attributes || {});
+
+      if (this.sectionState.hasPdf || !this.hasUploadedPdfFile()) {
+        this.stopPdfStateRefresh();
+      } else {
+        this.startPdfStateRefresh();
+      }
+
+      this.reRender();
+    },
+
+    ensurePdfStateLoaded: function () {
+      if (!this.sectionId) {
+        return;
+      }
+
+      this.fetchModelState();
+      this.probePdfAvailability();
+
+      if (this.hasUploadedPdfFile() || !this.sectionState.initialized) {
+        this.startPdfStateRefresh();
+      }
+    },
+
+    startPdfStateRefresh: function () {
+      if (this.pdfStateRefreshTimer) {
+        return;
+      }
+
+      this.pdfStateRefreshAttempts = 0;
+
+      var self = this;
+      this.pdfStateRefreshTimer = setInterval(function () {
+        self.refreshPdfState();
+      }, this.pdfStateRefreshIntervalMs);
+    },
+
+    stopPdfStateRefresh: function () {
+      if (!this.pdfStateRefreshTimer) {
+        return;
+      }
+
+      clearInterval(this.pdfStateRefreshTimer);
+      this.pdfStateRefreshTimer = null;
+    },
+
+    refreshPdfState: function () {
+      if (!this.sectionId) {
+        this.stopPdfStateRefresh();
+        return;
+      }
+
+      if (this.model && this.model.get("pdfMinioKey")) {
+        this.stopPdfStateRefresh();
+        return;
+      }
+
+      if (this.pdfStateRefreshAttempts >= this.maxPdfStateRefreshAttempts) {
+        this.stopPdfStateRefresh();
+        return;
+      }
+
+      this.pdfStateRefreshAttempts++;
+
+      this.fetchModelState();
+      this.probePdfAvailability();
+    },
+
+    syncSectionState: function (data) {
+      var hasPdf = !!(data && data.pdfMinioKey);
+      var hasUploadedPdfFile = !!(
+        data && (data.pdfFileId || data.pdfFileName || data.pdfFile)
+      );
+
+      this.sectionState.hasPdf = this.sectionState.hasPdf || hasPdf;
+      this.sectionState.hasUploadedPdfFile =
+        this.sectionState.hasUploadedPdfFile || hasUploadedPdfFile;
+      this.sectionState.initialized = true;
+    },
+
+    getCourseSectionApiPath: function () {
+      if (!this.sectionId) {
+        return null;
+      }
+
+      var loc = window.location.pathname;
+      var portalMatch = loc.match(/\/portal\/([^/]+)\//);
+
+      return portalMatch
+        ? "portal-access/" + portalMatch[1] + "/CourseSection/" + this.sectionId
+        : "CourseSection/" + this.sectionId;
+    },
+
+    getPdfUrlProbeApiPath: function () {
+      if (!this.sectionId) {
+        return null;
+      }
+
+      var loc = window.location.pathname;
+      var portalMatch = loc.match(/\/portal\/([^/]+)\//);
+
+      return portalMatch
+        ? "portal-access/" + portalMatch[1] + "/CourseSectionPdf/" + this.sectionId + "/url"
+        : "CourseSectionPdf/" + this.sectionId + "/url";
+    },
+
+    fetchModelState: function () {
+      if (!this.sectionId) {
+        return;
+      }
+
+      var self = this;
+
+      var fallbackRequest = function () {
+        var apiPath = self.getCourseSectionApiPath();
+        if (!apiPath) {
+          return;
+        }
+
+        Espo.Ajax.getRequest(apiPath)
+          .then(function (data) {
+            self.syncSectionState(data || {});
+
+            if (self.model) {
+              self.model.set(data || {});
+            }
+
+            self.handleModelStateChange();
+          })
+          .catch(function () {
+            if (self.pdfStateRefreshAttempts >= self.maxPdfStateRefreshAttempts) {
+              self.stopPdfStateRefresh();
+            }
+          });
+      };
+
+      if (!this.model || typeof this.model.fetch !== "function") {
+        fallbackRequest();
+        return;
+      }
+
+      Promise.resolve(this.model.fetch())
+        .then(function () {
+          self.syncSectionState(self.model ? self.model.attributes || {} : {});
+          self.handleModelStateChange();
+        })
+        .catch(function () {
+          fallbackRequest();
+        })
+        .catch(function () {
+          if (self.pdfStateRefreshAttempts >= self.maxPdfStateRefreshAttempts) {
+            self.stopPdfStateRefresh();
+          }
+        });
+    },
+
+    probePdfAvailability: function () {
+      if (!this.sectionId || this.sectionState.hasPdf) {
+        return;
+      }
+
+      var apiPath = this.getPdfUrlProbeApiPath();
+      if (!apiPath) {
+        return;
+      }
+
+      var self = this;
+      Espo.Ajax.getRequest(apiPath)
+        .then(function () {
+          self.sectionState.hasPdf = true;
+          self.sectionState.initialized = true;
+          self.stopPdfStateRefresh();
+          self.reRender();
+        })
+        .catch(function () {
+          // No-op: endpoint can return 403/404 while PDF key is not ready.
+        });
+    },
+
     openFullscreen: function () {
-      if (!this.model || !this.model.get("pdfMinioKey")) return;
+      this.ensureRuntimeSectionId();
+
+      if (!this.sectionId) return;
 
       var self = this;
       var overlay = document.createElement("div");
