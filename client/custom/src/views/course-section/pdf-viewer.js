@@ -327,7 +327,6 @@ define(["view"], function (View) {
         '      </div>' +
         // Zoom controls
         '      <button class="pdf-btn" id="pdf-zoom-out" title="Zoom Out"><i class="fas fa-search-minus"></i></button>' +
-        '      <span id="pdf-zoom-level">100%</span>' +
         '      <button class="pdf-btn" id="pdf-zoom-in" title="Zoom In"><i class="fas fa-search-plus"></i></button>' +
         '      <span class="pdf-separator">|</span>' +
         '      <button class="pdf-btn" id="pdf-theme-toggle" title="Tema scuro"><i class="fas fa-moon"></i></button>' +
@@ -360,7 +359,7 @@ define(["view"], function (View) {
       }
 
       var state = {
-        scale: 1.0,
+        scale: 0.6,
         mode: "scroll", // "scroll" or "single"
         currentPage: 1,
         startPage: 1,
@@ -467,12 +466,10 @@ define(["view"], function (View) {
       // Zoom
       overlay.querySelector("#pdf-zoom-in").addEventListener("click", function () {
         state.scale = Math.min(3.0, state.scale + 0.2);
-        overlay.querySelector("#pdf-zoom-level").textContent = Math.round(state.scale * 100) + "%";
         rerender();
       });
       overlay.querySelector("#pdf-zoom-out").addEventListener("click", function () {
         state.scale = Math.max(0.3, state.scale - 0.2);
-        overlay.querySelector("#pdf-zoom-level").textContent = Math.round(state.scale * 100) + "%";
         rerender();
       });
 
@@ -635,7 +632,6 @@ define(["view"], function (View) {
                     state.pdfDoc = pdf;
                     state.endPage = Math.min(state.endPage, pdf.numPages);
                     overlay.querySelector("#pdf-page-info").textContent = pdf.numPages + " pagine";
-                    overlay.querySelector("#pdf-zoom-level").textContent = Math.round(state.scale * 100) + "%";
                     renderAllPages();
                   }).catch(function (err) {
                     console.error("PDF.js error:", err);
@@ -743,12 +739,12 @@ define(["view"], function (View) {
         "  --pdf-danger:#d85c5a;",
         "  --pdf-text:#2f3a4b;",
         "  --pdf-muted:#6c7788;",
-        "  --pdf-border:#dbe3ee;",
+        "  --pdf-border:#efe6d8;",
         "  --pdf-header-bg:#ffffff;",
         "  --pdf-panel-bg:#ffffff;",
-        "  --pdf-body-bg:#f3f6fb;",
-        "  --pdf-btn-bg:#f3f6fb;",
-        "  --pdf-btn-hover:#e8eef8;",
+        "  --pdf-body-bg:#f7f5f0;",
+        "  --pdf-btn-bg:#fbf9f4;",
+        "  --pdf-btn-hover:#f4eee3;",
         "  --pdf-shadow:0 22px 58px rgba(15, 23, 42, 0.28);",
         "  position:fixed;",
         "  top:0;",
@@ -763,15 +759,15 @@ define(["view"], function (View) {
         "#pdf-fullscreen-overlay[data-theme='dark'] {",
         "  --pdf-accent:#7aa2ff;",
         "  --pdf-danger:#ef7d7b;",
-        "  --pdf-text:#e8eef9;",
-        "  --pdf-muted:#a6b4c9;",
-        "  --pdf-border:#35435c;",
-        "  --pdf-header-bg:#1a2230;",
-        "  --pdf-panel-bg:#161d2a;",
-        "  --pdf-body-bg:#101722;",
-        "  --pdf-btn-bg:#222d3d;",
-        "  --pdf-btn-hover:#2b3a51;",
-        "  --pdf-shadow:0 26px 70px rgba(0, 0, 0, 0.62);",
+        "  --pdf-text:#edf1f7;",
+        "  --pdf-muted:#bcc4d2;",
+        "  --pdf-border:#596171;",
+        "  --pdf-header-bg:#3b414d;",
+        "  --pdf-panel-bg:#343a46;",
+        "  --pdf-body-bg:#2c323d;",
+        "  --pdf-btn-bg:#424855;",
+        "  --pdf-btn-hover:#4f5766;",
+        "  --pdf-shadow:0 20px 52px rgba(0, 0, 0, 0.42);",
         "}",
         ".pdf-overlay-backdrop {",
         "  position:absolute;",
@@ -867,7 +863,7 @@ define(["view"], function (View) {
         "  box-shadow:0 2px 6px rgba(15, 23, 42, 0.2);",
         "}",
         ".pdf-nav-single { display:flex; align-items:center; gap:6px; }",
-        "#pdf-current-page, #pdf-zoom-level {",
+        "#pdf-current-page {",
         "  min-width:48px;",
         "  text-align:center;",
         "  font-weight:600;",
