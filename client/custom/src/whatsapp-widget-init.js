@@ -117,6 +117,222 @@
         return '';
     }
 
+    function chatIdsEqual(a, b) {
+        var first = getSerializedChatId(a);
+        var second = getSerializedChatId(b);
+
+        return !!first && first === second;
+    }
+
+    function getStoredUserId() {
+        var raw = localStorage.getItem('espo-user-lastUserId');
+        if (!raw) return 'system';
+
+        try {
+            return JSON.parse(raw);
+        } catch (e) {
+            return raw;
+        }
+    }
+
+    function getStoredAuthToken() {
+        var auth = localStorage.getItem('espo-user-auth');
+
+        if (!auth) {
+            var cookieMatch = document.cookie.match(new RegExp('(^| )auth-token=([^;]+)'));
+
+            return cookieMatch ? cookieMatch[2] : '';
+        }
+
+        if (auth.charAt(0) === '"') {
+            try {
+                auth = JSON.parse(auth);
+            } catch (e) {}
+        }
+
+        try {
+            var decoded = atob(auth);
+            var parts = decoded.split(':');
+
+            return parts.length > 1 ? parts.slice(1).join(':') : '';
+        } catch (e) {
+            console.warn('WA Widget: Failed to decode stored auth token', e);
+
+            return '';
+        }
+    }
+
+    function applyMessageDeliveryState(message) {
+        if (!message) return message;
+
+        if (message.ack === undefined || message.ack === null) {
+            var status = (message.status || '').toLowerCase();
+
+            if (status === 'read' || status === 'played') message.ack = 3;
+            else if (status === 'delivered') message.ack = 2;
+            else if (status === 'sent' || status === 'received') message.ack = 1;
+        }
+
+        return message;
+    }
+
+    function isTemporaryMessageId(id) {
+        return typeof id === 'string' &&
+            (
+                id.indexOf('temp-') === 0 ||
+                id.indexOf('sent_') === 0 ||
+                id.indexOf('recv_') === 0
+            );
+    }
+
+    function normalizeMessageRecord(message) {
+        if (!message) return null;
+
+        var normalized = {};
+
+        Object.keys(message).forEach(function(key) {
+            normalized[key] = message[key];
+        });
+
+        var canonicalId = normalized.messageId || getSerializedChatId(normalized.id) || normalized.tempId || '';
+        var normalizedChatId = getSerializedChatId(normalized.chatId) || normalized.chatId || '';
+
+        if (canonicalId) {
+            normalized.messageId = canonicalId;
+            normalized.id = canonicalId;
+        }
+
+        if (normalizedChatId) {
+            normalized.chatId = normalizedChatId;
+        }
+
+        normalized.fromMe = !!normalized.fromMe;
+        normalized.timestamp = Math.floor(normalizeTimestamp(normalized.timestamp) / 1000);
+
+        return applyMessageDeliveryState(normalized);
+    }
+
+    function getMessageIdentity(message) {
+        if (!message) return '';
+
+        return message.messageId || getSerializedChatId(message.id) || message.tempId || '';
+    }
+
+    function messagesLookEquivalent(existing, incoming) {
+        if (!existing || !incoming) return false;
+
+        if (!!existing.fromMe !== !!incoming.fromMe) return false;
+
+        var existingChatId = getSerializedChatId(existing.chatId) || existing.chatId || '';
+        var incomingChatId = getSerializedChatId(incoming.chatId) || incoming.chatId || '';
+
+        if (existingChatId && incomingChatId && existingChatId !== incomingChatId) {
+            return false;
+        }
+
+        var existingBody = (existing.body || '').trim();
+        var incomingBody = (incoming.body || '').trim();
+
+        if (!existingBody || existingBody !== incomingBody) {
+            return false;
+        }
+
+        var diff = Math.abs(normalizeTimestamp(existing.timestamp) - normalizeTimestamp(incoming.timestamp));
+        var existingId = getMessageIdentity(existing);
+        var incomingId = getMessageIdentity(incoming);
+
+        if (existing._optimistic || incoming._optimistic) {
+            return diff <= 5 * 60 * 1000;
+        }
+
+        if (isTemporaryMessageId(existingId) || isTemporaryMessageId(incomingId)) {
+            return diff <= 60 * 1000;
+        }
+
+        return false;
+    }
+
+    function mergeMessageCollections(existingList, incomingList) {
+        var list = (existingList || []).map(normalizeMessageRecord).filter(Boolean);
+        var changed = false;
+
+        (incomingList || []).forEach(function(message) {
+            message = normalizeMessageRecord(message);
+
+            if (!message) return;
+
+            var id = getMessageIdentity(message);
+            var matchIndex = -1;
+
+            for (var i = 0; i < list.length; i++) {
+                var existing = list[i];
+                var existingId = getMessageIdentity(existing);
+
+                if (existingId && id && existingId === id) {
+                    matchIndex = i;
+                    break;
+                }
+
+                if (messagesLookEquivalent(existing, message)) {
+                    matchIndex = i;
+                    break;
+                }
+            }
+
+            if (matchIndex === -1) {
+                list.push(message);
+                changed = true;
+                return;
+            }
+
+            var current = list[matchIndex];
+            var hasDiff =
+                current._optimistic ||
+                current.body !== message.body ||
+                !!current.fromMe !== !!message.fromMe ||
+                normalizeTimestamp(current.timestamp) !== normalizeTimestamp(message.timestamp) ||
+                current.ack !== message.ack ||
+                (current.status || '') !== (message.status || '');
+
+            if (hasDiff) {
+                list[matchIndex] = message;
+                changed = true;
+            }
+        });
+
+        list.sort(function(a, b) {
+            return normalizeTimestamp(a.timestamp) - normalizeTimestamp(b.timestamp);
+        });
+
+        return {
+            list: list,
+            changed: changed
+        };
+    }
+
+    function fetchStoredMessages(chatId, limit) {
+        return api('GET', 'WhatsAppMessage', {
+            where: [{
+                type: 'equals',
+                attribute: 'chatId',
+                value: chatId
+            }],
+            orderBy: 'timestamp',
+            order: 'desc',
+            maxSize: limit || 100
+        }).then(function(dbResult) {
+            var list = (dbResult.list || []).map(function(message) {
+                return normalizeMessageRecord(message);
+            }).filter(Boolean);
+
+            list.sort(function(a, b) {
+                return normalizeTimestamp(a.timestamp) - normalizeTimestamp(b.timestamp);
+            });
+
+            return list;
+        });
+    }
+
     function normalizeCachedLastMessage(message) {
         if (!message) return null;
 
@@ -585,36 +801,8 @@
         var portStr = window.location.port;
         var port = portStr ? ':' + portStr : '';
         
-        var userId = 'system';
-        var espoUserLastUserId = localStorage.getItem('espo-user-lastUserId');
-        if (espoUserLastUserId) {
-            try { userId = JSON.parse(espoUserLastUserId); } 
-            catch(e) { userId = espoUserLastUserId; }
-        }
-
-        var authToken = '';
-        var match = document.cookie.match(new RegExp('(^| )auth-token=([^;]+)'));
-        if (match) authToken = match[2];
-        else {
-            var lsAuth = localStorage.getItem('espo-user-auth');
-            if (lsAuth) {
-                if (lsAuth.charAt(0) === '"') {
-                    try { lsAuth = JSON.parse(lsAuth); } catch(e) {}
-                }
-                try {
-                    var decoded = atob(lsAuth);
-                    var parts = decoded.split(':');
-                    if (parts.length > 1) {
-                        authToken = parts[1]; // EspoCRM v8 format: base64(username:token)
-                    } else {
-                        var jsonObj = JSON.parse(decoded); // Older legacy format
-                        authToken = jsonObj.token;
-                    }
-                } catch(e) {
-                    console.warn('WA Widget: Failed to decode authToken', e);
-                }
-            }
-        }
+        var userId = getStoredUserId();
+        var authToken = getStoredAuthToken();
 
         if (!authToken) {
             console.warn('WA Widget: No authToken found for WS!');
@@ -638,7 +826,11 @@
                     var payload = data.data || data;
                     var chatId = data.chatId || payload.chatId;
 
-                    if (state.screen === 'chat' && state.chatId && chatId === state.chatId) {
+                    if (payload && !payload.chatId) {
+                        payload.chatId = chatId;
+                    }
+
+                    if (state.screen === 'chat' && state.chatId && chatIdsEqual(chatId, state.chatId)) {
                         if (action === 'message') {
                             onRealTimeMessage(payload, 'message');
                         } else if (action === 'message_ack') {
@@ -677,52 +869,13 @@
         if (state.screen === 'chat' && state.chatId) {
             state.messagesLoading = true;
 
-            api('GET', 'WhatsApp/action/getChatMessages', {
-                chatId: state.chatId,
-                limit: 50
-            }).then(function(r) {
-                var apiMsgs = r.list || [];
-                if (apiMsgs.length === 0) return;
+            fetchStoredMessages(state.chatId, 50).then(function(messages) {
+                if (!messages.length) return;
 
-                var changed = false;
-                apiMsgs.forEach(function(msg) {
-                    var id = (msg.id && msg.id._serialized) || msg.id || msg.messageId;
-                    if (!id) return;
-                    var found = false;
-                    for (var i = 0; i < state.messages.length; i++) {
-                        var existId = (state.messages[i].id && state.messages[i].id._serialized) || state.messages[i].id || state.messages[i].messageId || state.messages[i].tempId;
-                        if (existId === id) {
-                            found = true;
-                            if (msg.ack !== undefined && state.messages[i].ack !== msg.ack) {
-                                state.messages[i].ack = msg.ack;
-                                changed = true;
-                            }
-                            if (state.messages[i]._optimistic) {
-                                state.messages[i] = msg;
-                                changed = true;
-                            }
-                            break;
-                        }
-                        if (state.messages[i]._optimistic && state.messages[i].body === msg.body && state.messages[i].fromMe && msg.fromMe) {
-                            state.messages[i] = msg;
-                            found = true;
-                            changed = true;
-                            break;
-                        }
-                    }
-                    if (!found) {
-                        state.messages.push(msg);
-                        changed = true; // If a new message is added, it's a change
-                    }
-                }); // End of forEach
+                var merged = mergeMessageCollections(state.messages, messages);
 
-                if (changed) {
-                    // Force chronological order for safety
-                    state.messages.sort(function(a, b) {
-                        var ta = a.timestamp;
-                        var tb = b.timestamp;
-                        return (parseInt(ta) || 0) - (parseInt(tb) || 0);
-                    });
+                if (merged.changed) {
+                    state.messages = merged.list;
                     renderMessages(state.messages);
                 }
             }).catch(function(e) {
@@ -744,16 +897,19 @@
     function onRealTimeMessage(msg, action) {
         if (!msg) return;
         action = action || 'message';
+        msg = normalizeMessageRecord(msg);
 
-        if (state.screen === 'chat' && state.chatId === msg.chatId) {
-            var id = (msg.id && msg.id._serialized) || msg.id || msg.messageId;
-            var isDuplicate = false;
+        if (!msg) return;
 
+        if (state.screen === 'chat' && chatIdsEqual(state.chatId, msg.chatId)) {
             if (action === 'message_ack') {
+                var incomingId = getMessageIdentity(msg);
+
                 for (var i = 0; i < state.messages.length; i++) {
                     var existing = state.messages[i];
-                    var existingId = (existing.id && existing.id._serialized) || existing.id || existing.messageId || existing.tempId;
-                    if (existingId === id) {
+                    var existingId = getMessageIdentity(existing);
+
+                    if (existingId === incomingId) {
                         state.messages[i].ack = msg.ack;
                         if (msg.status) state.messages[i].status = msg.status;
                         break;
@@ -761,27 +917,9 @@
                 }
                 renderMessages(state.messages);
             } else {
-                for (var i = 0; i < state.messages.length; i++) {
-                    var existing = state.messages[i];
-                    var existingId = (existing.id && existing.id._serialized) || existing.id || existing.messageId || existing.tempId;
+                var merged = mergeMessageCollections(state.messages, [msg]);
 
-                    if (existingId === id) {
-                        isDuplicate = true;
-                        state.messages[i] = msg;
-                        break;
-                    }
-
-                    if (existing._optimistic && existing.body === msg.body && existing.fromMe && msg.fromMe) {
-                        state.messages[i] = msg;
-                        isDuplicate = true;
-                        break;
-                    }
-                }
-
-                if (!isDuplicate) {
-                    state.messages.push(msg);
-                }
-                
+                state.messages = merged.list;
                 renderMessages(state.messages);
             }
         }
@@ -790,13 +928,13 @@
             var chatFound = false;
             for (var j = 0; j < state.chats.length; j++) {
                 var cId = state.chats[j].id._serialized || state.chats[j].id;
-                if (cId === msg.chatId) {
+                if (chatIdsEqual(cId, msg.chatId)) {
                     chatFound = true;
                     if (action === 'message') {
                         state.chats[j].lastMessage = msg;
                     } else if (action === 'message_ack' && state.chats[j].lastMessage) {
-                        var lmId = state.chats[j].lastMessage.id && state.chats[j].lastMessage.id._serialized || state.chats[j].lastMessage.id;
-                        var msgId = msg.id && msg.id._serialized || msg.id;
+                        var lmId = getMessageIdentity(state.chats[j].lastMessage);
+                        var msgId = getMessageIdentity(msg);
                         if (lmId === msgId) {
                             state.chats[j].lastMessage.ack = msg.ack;
                             if (msg.status) state.chats[j].lastMessage.status = msg.status;
@@ -807,7 +945,7 @@
             }
 
             if (!chatFound && action === 'message') {
-                loadChats();
+                loadChats({silent: true, force: true});
             } else if (state.screen === 'chatList') {
                 renderChatList(state.chats);
             }
@@ -988,16 +1126,15 @@
             chatId: chatId, 
             limit: 100 
         }).then(function (r) {
-            var apiMessages = r.list || [];
-            
-            mergeMessages(apiMessages, chatId).then(function(merged) {
-                state.messages = merged;
-                if (state.messages.length) {
-                    renderMessages(state.messages);
-                } else {
-                    fallbackToLastMessage(chatId);
-                }
-            });
+            var merged = mergeMessageCollections([], (r && r.list) || []);
+
+            state.messages = merged.list;
+
+            if (state.messages.length) {
+                renderMessages(state.messages);
+            } else {
+                fallbackToLastMessage(chatId);
+            }
         }).catch(function () {
             fallbackToLastMessage(chatId);
         });
@@ -1006,76 +1143,15 @@
         startMessagePolling();
     }
 
-    function mergeMessages(apiMessages, chatId) {
-        return api('GET', 'WhatsAppMessage', {
-            where: [{
-                type: 'equals',
-                attribute: 'chatId',
-                value: chatId
-            }],
-            orderBy: 'timestamp',
-            order: 'desc',
-            maxSize: 100
-        }).then(function(dbResult) {
-            var dbMessages = dbResult.list || [];
-            var merged = {};
-            
-            apiMessages.forEach(function(msg) {
-                var id = (msg.id && msg.id._serialized) || msg.id || msg.messageId;
-                if (!id) return;
-                merged[id] = msg;
-            });
-            
-            dbMessages.forEach(function(msg) {
-                var id = msg.messageId;
-                if (!id) return;
-                if (!merged[id]) {
-                     if (msg.status && !msg.ack) {
-                         var st = msg.status.toLowerCase();
-                         if (st === 'read' || st === 'played') msg.ack = 3;
-                         else if (st === 'delivered') msg.ack = 2;
-                         else if (st === 'sent' || st === 'received') msg.ack = 1;
-                     }
-                     merged[id] = msg;
-                } else {
-                    if (merged[id].ack === undefined && msg.status) {
-                        var st = msg.status.toLowerCase();
-                        if (st === 'read' || st === 'played') merged[id].ack = 3;
-                        else if (st === 'delivered') merged[id].ack = 2;
-                        else if (st === 'sent' || st === 'received') merged[id].ack = 1;
-                    }
-                }
-            });
-            
-            var result = Object.values(merged);
-            result.sort(function(a, b) {
-                return normalizeTimestamp(a.timestamp) - normalizeTimestamp(b.timestamp);
-            });
-            
-            return result;
-        }).catch(function() {
-            return apiMessages;
-        });
-    }
-
     function fallbackToLastMessage(chatId) {
         var container = _$('wa-messages-container');
         if (!container) return;
         
-        api('GET', 'WhatsAppMessage', {
-            where: [{
-                type: 'equals',
-                attribute: 'chatId',
-                value: chatId
-            }],
-            orderBy: 'timestamp',
-            order: 'desc',
-            maxSize: 50
-        }).then(function(r) {
-            if (r.list && r.list.length > 0) {
-                state.messages = r.list.reverse();
+        fetchStoredMessages(chatId, 50).then(function(list) {
+            if (list && list.length > 0) {
+                state.messages = list;
                 renderMessages(state.messages);
-                showSystemMessage('Loaded ' + r.list.length + ' messages from local storage.');
+                showSystemMessage('Loaded ' + list.length + ' messages from local storage.');
                 return;
             }
             fallbackToLastMessageFromList(chatId, container);

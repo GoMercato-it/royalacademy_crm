@@ -28,6 +28,110 @@ class WhatsApp extends Base
         return $factory->create(WebSocketService::class);
     }
 
+    private function normalizeTimestampValue($timestamp): int
+    {
+        if (is_numeric($timestamp)) {
+            return (int) $timestamp;
+        }
+
+        $parsed = strtotime((string) $timestamp);
+
+        return $parsed ?: time();
+    }
+
+    private function isTemporaryMessageId(?string $messageId): bool
+    {
+        if (!$messageId) {
+            return false;
+        }
+
+        return str_starts_with($messageId, 'sent_') ||
+            str_starts_with($messageId, 'recv_') ||
+            str_starts_with($messageId, 'temp-');
+    }
+
+    private function findStoredMessage($entityManager, ?string $messageId, string $chatId, bool $fromMe, string $body, int $timestamp)
+    {
+        $repository = $entityManager->getRepository('WhatsAppMessage');
+
+        if ($messageId) {
+            $existing = $repository->where(['messageId' => $messageId])->findOne();
+
+            if ($existing) {
+                return $existing;
+            }
+        }
+
+        if ($body === '') {
+            return null;
+        }
+
+        $candidates = $repository
+            ->where([
+                'chatId' => $chatId,
+                'fromMe' => $fromMe,
+                'body' => $body,
+            ])
+            ->order('timestamp', 'DESC')
+            ->limit(10)
+            ->find();
+
+        foreach ($candidates as $candidate) {
+            $candidateTimestamp = $candidate->get('timestamp') ? strtotime($candidate->get('timestamp')) : null;
+
+            if (!$candidateTimestamp) {
+                continue;
+            }
+
+            if (abs($candidateTimestamp - $timestamp) <= 60) {
+                return $candidate;
+            }
+        }
+
+        return null;
+    }
+
+    private function upsertStoredMessage($entityManager, array $data)
+    {
+        $chatId = $data['chatId'] ?? null;
+
+        if (!$chatId) {
+            throw new \RuntimeException('chatId is required for WhatsApp message persistence');
+        }
+
+        $fromMe = (bool) ($data['fromMe'] ?? false);
+        $body = (string) ($data['body'] ?? '');
+        $timestamp = $this->normalizeTimestampValue($data['timestamp'] ?? time());
+        $messageId = $data['messageId'] ?? null;
+        $status = $data['status'] ?? ($fromMe ? 'Sent' : 'Received');
+
+        $entity = $this->findStoredMessage($entityManager, $messageId, $chatId, $fromMe, $body, $timestamp);
+
+        if (!$entity) {
+            $entity = $entityManager->getEntity('WhatsAppMessage');
+        }
+
+        $existingMessageId = $entity->get('messageId');
+
+        $entity->set([
+            'body' => $body,
+            'chatId' => $chatId,
+            'fromMe' => $fromMe,
+            'timestamp' => date('Y-m-d H:i:s', $timestamp),
+            'status' => $status,
+        ]);
+
+        if ($messageId && (!$existingMessageId || $existingMessageId === $messageId || $this->isTemporaryMessageId($existingMessageId))) {
+            $entity->set('messageId', $messageId);
+        } else if (!$existingMessageId) {
+            $entity->set('messageId', $messageId ?: uniqid($fromMe ? 'sent_' : 'recv_'));
+        }
+
+        $entityManager->saveEntity($entity);
+
+        return $entity;
+    }
+
     public function getActionLogin(Request $request, Response $response): array
     {
         $this->getWhatsAppClient()->startSession();
@@ -105,30 +209,18 @@ class WhatsApp extends Base
                     }
                     if (!$msgId)
                         continue;
-
-                    // Check if already in DB
-                    $exists = $entityManager->getRepository('WhatsAppMessage')
-                        ->where(['messageId' => $msgId])
-                        ->findOne();
-                    if ($exists)
-                        continue;
-
-                    // Save new message to DB
-                    $msgEntity = $entityManager->getEntity('WhatsAppMessage');
                     $fromMe = $apiMsg['fromMe'] ?? false;
                     $body = $apiMsg['body'] ?? '';
                     $timestamp = $apiMsg['timestamp'] ?? time();
-
-                    $msgEntity->set([
-                        'body' => $body,
-                        'chatId' => $chatId,
-                        'fromMe' => $fromMe,
-                        'timestamp' => date('Y-m-d H:i:s', is_numeric($timestamp) ? $timestamp : strtotime($timestamp)),
-                        'status' => $fromMe ? 'Sent' : 'Received',
-                        'messageId' => $msgId,
-                    ]);
                     try {
-                        $entityManager->saveEntity($msgEntity);
+                        $this->upsertStoredMessage($entityManager, [
+                            'body' => $body,
+                            'chatId' => $chatId,
+                            'fromMe' => $fromMe,
+                            'timestamp' => $timestamp,
+                            'status' => $fromMe ? 'Sent' : 'Received',
+                            'messageId' => $msgId,
+                        ]);
                     } catch (\PDOException $e) {
                         // Ignore duplicate entry errors
                         if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
@@ -269,52 +361,47 @@ class WhatsApp extends Base
         if ($sent) {
             $entityManager = $this->getContainer()->get('entityManager');
             $realId = $messageId ?: uniqid('sent_');
+            $storedMessageId = $realId;
 
-            // Protect against race condition with webhook
-            $exists = $entityManager->getRepository('WhatsAppMessage')->where(['messageId' => $realId])->findOne();
+            try {
+                $msgEntity = $this->upsertStoredMessage($entityManager, [
+                    'body' => $message,
+                    'chatId' => $phone,
+                    'fromMe' => true,
+                    'timestamp' => time(),
+                    'status' => 'Sent',
+                    'messageId' => $realId,
+                ]);
 
-            if (!$exists) {
-                try {
-                    $msgEntity = $entityManager->getEntity('WhatsAppMessage');
-                    $msgEntity->set([
-                        'body' => $message,
-                        'chatId' => $phone,
-                        'fromMe' => true,
-                        'timestamp' => date('Y-m-d H:i:s'),
-                        'status' => 'Sent',
-                        'messageId' => $realId
-                    ]);
-                    $entityManager->saveEntity($msgEntity);
-
-                    // 3. 🔥 Broadcast via WebSocket in real-time
-                    try {
-                        $wsService = $this->getWebSocketService();
-                        $wsService->broadcastMessage($phone, [
-                            'id' => $realId,
-                            'body' => $message,
-                            'chatId' => $phone,
-                            'fromMe' => true,
-                            'timestamp' => time(),
-                            'ack' => 1,  // Sent
-                            'status' => 'Sent'
-                        ]);
-
-                        $GLOBALS['log']->info('WhatsApp message broadcasted via WebSocket: ' . $realId);
-                    } catch (\Throwable $e) {
-                        // Ignore WebSocket errors to prevent blocking message sending
-                        $GLOBALS['log']->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
-                    }
-                } catch (\PDOException $e) {
-                    if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
-                        throw $e;
-                    }
-                    // If it is 23000 / 1062, it means webhook already saved it, so we can safely ignore
+                $storedMessageId = $msgEntity->get('messageId') ?: $storedMessageId;
+            } catch (\PDOException $e) {
+                if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
+                    throw $e;
                 }
+            }
+
+            // 3. 🔥 Broadcast via WebSocket in real-time
+            try {
+                $wsService = $this->getWebSocketService();
+                $wsService->broadcastMessage($phone, [
+                    'id' => $storedMessageId,
+                    'body' => $message,
+                    'chatId' => $phone,
+                    'fromMe' => true,
+                    'timestamp' => time(),
+                    'ack' => 1,
+                    'status' => 'Sent'
+                ]);
+
+                $GLOBALS['log']->info('WhatsApp message broadcasted via WebSocket: ' . $storedMessageId);
+            } catch (\Throwable $e) {
+                // Ignore WebSocket errors to prevent blocking message sending
+                $GLOBALS['log']->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
             }
 
             return [
                 'success' => true,
-                'messageId' => $realId
+                'messageId' => $storedMessageId
             ];
         }
 
@@ -385,39 +472,40 @@ class WhatsApp extends Base
 
             $fromMe = $payload->fromMe ?? false;
             $chatId = $fromMe ? $to : $from;
+            $status = $fromMe ? 'Sent' : 'Received';
 
-            $msgEntity = $entityManager->getEntity('WhatsAppMessage');
-            $msgEntity->set([
-                'body' => $body,
-                'chatId' => $chatId,
-                'fromMe' => $fromMe,
-                'timestamp' => date('Y-m-d H:i:s', $timestamp),
-                'status' => 'Received',
-                'messageId' => $msgId ?: uniqid('recv_')
-            ]);
             try {
-                $entityManager->saveEntity($msgEntity);
+                $msgEntity = $this->upsertStoredMessage($entityManager, [
+                    'body' => $body,
+                    'chatId' => $chatId,
+                    'fromMe' => $fromMe,
+                    'timestamp' => $timestamp,
+                    'status' => $status,
+                    'messageId' => $msgId,
+                ]);
             } catch (\PDOException $e) {
                 if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
                     throw $e;
                 }
-                // Duplicate entry from race condition: already saved, continue to broadcast!
+                $msgEntity = $msgId
+                    ? $entityManager->getRepository('WhatsAppMessage')->where(['messageId' => $msgId])->findOne()
+                    : null;
             }
 
             // 🔥 Broadcast via WebSocket
             try {
                 $wsService = $this->getWebSocketService();
                 $wsService->broadcastMessage($chatId, [
-                    'id' => $msgId ?: $msgEntity->getId(),
+                    'id' => $msgEntity ? ($msgEntity->get('messageId') ?: $msgEntity->getId()) : ($msgId ?: uniqid('recv_')),
                     'body' => $body,
                     'chatId' => $chatId,
                     'fromMe' => $fromMe,
                     'timestamp' => $timestamp,
                     'ack' => $fromMe ? 1 : 0,
-                    'status' => $fromMe ? 'Sent' : 'Received'
+                    'status' => $status
                 ]);
 
-                $GLOBALS['log']->info('WhatsApp incoming message broadcasted via WebSocket: ' . ($msgId ?: $msgEntity->getId()));
+                $GLOBALS['log']->info('WhatsApp incoming message broadcasted via WebSocket: ' . ($msgEntity ? ($msgEntity->get('messageId') ?: $msgEntity->getId()) : ($msgId ?: 'unknown')));
             } catch (\Throwable $e) {
                 $GLOBALS['log']->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
             }
