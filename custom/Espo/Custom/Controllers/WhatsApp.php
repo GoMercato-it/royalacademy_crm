@@ -5,9 +5,13 @@ use Espo\Core\Controllers\Base;
 use Espo\Core\Api\Request;
 use Espo\Core\Api\Response;
 use Espo\Core\Exceptions\BadRequest;
+use Espo\Core\Exceptions\NotFound;
 use Espo\Custom\Core\WhatsApp\WhatsAppClient;
 use Espo\Core\InjectableFactory;
 use Espo\Modules\WhatsApp\Services\WebSocketService;
+use Espo\Modules\WhatsApp\Services\MessageDispatchService;
+use Espo\Modules\WhatsApp\Services\SessionLifecycleService;
+use Espo\Modules\WhatsApp\Services\AvatarStorageService;
 
 class WhatsApp extends Base
 {
@@ -26,6 +30,27 @@ class WhatsApp extends Base
         /** @var InjectableFactory $factory */
         $factory = $this->getContainer()->get('injectableFactory');
         return $factory->create(WebSocketService::class);
+    }
+
+    private function getMessageDispatchService(): MessageDispatchService
+    {
+        /** @var InjectableFactory $factory */
+        $factory = $this->getContainer()->get('injectableFactory');
+        return $factory->create(MessageDispatchService::class);
+    }
+
+    private function getSessionLifecycleService(): SessionLifecycleService
+    {
+        /** @var InjectableFactory $factory */
+        $factory = $this->getContainer()->get('injectableFactory');
+        return $factory->create(SessionLifecycleService::class);
+    }
+
+    private function getAvatarStorageService(): AvatarStorageService
+    {
+        /** @var InjectableFactory $factory */
+        $factory = $this->getContainer()->get('injectableFactory');
+        return $factory->create(AvatarStorageService::class);
     }
 
     private function normalizeTimestampValue($timestamp): int
@@ -137,6 +162,13 @@ class WhatsApp extends Base
         $this->getWhatsAppClient()->startSession();
         $qrCode = $this->getWhatsAppClient()->getQRCode();
 
+        if ($qrCode) {
+            $this->getSessionLifecycleService()->markQrReady(
+                $this->getWhatsAppClient()->getSessionId(),
+                ['source' => 'login']
+            );
+        }
+
         return [
             'success' => true,
             'qrCode' => $qrCode
@@ -146,6 +178,13 @@ class WhatsApp extends Base
     public function getActionQrCode(Request $request, Response $response): array
     {
         $qr = $this->getWhatsAppClient()->getQRCode();
+
+        if ($qr) {
+            $this->getSessionLifecycleService()->markQrReady(
+                $this->getWhatsAppClient()->getSessionId(),
+                ['source' => 'qrCode']
+            );
+        }
 
         return [
             'qr' => $qr,
@@ -157,6 +196,12 @@ class WhatsApp extends Base
         // Check if enabled (default to true if null)
         $enabled = $this->getConfig()->get('whatsappEnabled');
         if ($enabled === false) {
+            $this->getSessionLifecycleService()->recordState(
+                $this->getWhatsAppClient()->getSessionId(),
+                'disabled',
+                ['rawState' => 'DISABLED']
+            );
+
             return [
                 'status' => 'disabled',
                 'isConnected' => false,
@@ -166,6 +211,10 @@ class WhatsApp extends Base
 
         $status = $this->getWhatsAppClient()->getSessionStatus();
         $isConnected = in_array(strtoupper($status), ['CONNECTED', 'AUTHENTICATED']);
+        $this->getSessionLifecycleService()->syncTransportState(
+            $this->getWhatsAppClient()->getSessionId(),
+            $status
+        );
 
         return [
             'status' => $status,
@@ -198,62 +247,14 @@ class WhatsApp extends Base
         try {
             $apiMessages = $this->getWhatsAppClient()->getChatMessages($chatId, $limit);
             if (!empty($apiMessages)) {
-                foreach ($apiMessages as $apiMsg) {
-                    $msgId = null;
-                    if (isset($apiMsg['id']) && is_array($apiMsg['id'])) {
-                        $msgId = $apiMsg['id']['_serialized'] ?? null;
-                    } else {
-                        $msgId = $apiMsg['id'] ?? $apiMsg['messageId'] ?? null;
-                    }
-                    if (!$msgId)
-                        continue;
-                    $fromMe = $apiMsg['fromMe'] ?? false;
-                    $body = $apiMsg['body'] ?? '';
-                    $timestamp = $apiMsg['timestamp'] ?? time();
-                    try {
-                        $this->upsertStoredMessage($entityManager, [
-                            'body' => $body,
-                            'chatId' => $chatId,
-                            'fromMe' => $fromMe,
-                            'timestamp' => $timestamp,
-                            'status' => $fromMe ? 'Sent' : 'Received',
-                            'messageId' => $msgId,
-                        ]);
-                    } catch (\PDOException $e) {
-                        // Ignore duplicate entry errors
-                        if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
-                            $GLOBALS['log']->warning('WhatsApp getChatMessages save error: ' . $e->getMessage());
-                        }
-                    }
-                }
+                $this->getMessageDispatchService()->ingestApiMessages($chatId, $apiMessages);
             }
         } catch (\Throwable $e) {
             $GLOBALS['log']->warning('WhatsApp getChatMessages API fetch failed: ' . $e->getMessage());
         }
 
         // Step 2: Always read final result from DB (now has API + webhook messages merged)
-        $collection = $entityManager->getRepository('WhatsAppMessage')
-            ->where(['chatId' => $chatId])
-            ->order('timestamp', 'DESC')
-            ->limit($limit)
-            ->find();
-
-        $result = [];
-        foreach ($collection as $msg) {
-            $fromMe = (bool) $msg->get('fromMe');
-            $result[] = [
-                'id' => $msg->get('messageId') ?: $msg->getId(),
-                'messageId' => $msg->get('messageId') ?: $msg->getId(),
-                'body' => $msg->get('body') ?? '',
-                'chatId' => $msg->get('chatId') ?? $chatId,
-                'fromMe' => $fromMe,
-                'timestamp' => $msg->get('timestamp') ? strtotime($msg->get('timestamp')) : time(),
-                'ack' => $fromMe ? 1 : 0,
-                'status' => $msg->get('status') ?? 'Received',
-            ];
-        }
-
-        $result = array_reverse($result);
+        $result = $this->getMessageDispatchService()->getStoredMessages($chatId, $limit);
 
         return [
             'success' => true,
@@ -278,62 +279,49 @@ class WhatsApp extends Base
             return ['url' => null];
         }
 
-        // Check local cache first to avoid hammering the API/CDN
-        $filename = 'wa-avatar-' . md5($id) . '.jpg';
-        $path = 'client/custom/whatsapp-avatars/' . $filename;
-        $relativeUrl = '/' . $path;
+        $link = $this->getAvatarStorageService()->ensureAvatar($id);
 
-        if (file_exists($path)) {
-            // Cache valid for 7 days
-            if (time() - filemtime($path) < 604800) {
-                return ['url' => $relativeUrl . '?v=' . filemtime($path)];
-            }
-        }
+        if ($link) {
+            $version = $this->getAvatarStorageService()->getAvatarVersion($id) ?: time();
 
-        // 1. Get temporary CDN URL from WhatsApp Client
-        $url = $this->getWhatsAppClient()->getProfilePicUrl($id);
-
-        if ($url) {
-            $imageData = null;
-            $httpCode = 0;
-
-            if (str_starts_with($url, 'data:image/')) {
-                $parts = explode(',', $url, 2);
-                if (count($parts) === 2) {
-                    $decoded = base64_decode($parts[1], true);
-                    if ($decoded !== false && $decoded !== '') {
-                        $imageData = $decoded;
-                        $httpCode = 200;
-                    }
-                }
-            } else {
-                // 2. Download the image locally to bypass CORS and expiration
-                $ch = curl_init($url);
-                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-                // Some CDNs require user agent
-                curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-                $imageData = curl_exec($ch);
-                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-                curl_close($ch);
-            }
-
-            if ($httpCode === 200 && $imageData) {
-                if (!is_dir(dirname($path))) {
-                    mkdir(dirname($path), 0755, true);
-                }
-                file_put_contents($path, $imageData);
-                return ['url' => $relativeUrl . '?v=' . time()];
-            }
+            return [
+                'url' => '/api/v1/WhatsApp/action/profilePicContent?id=' . rawurlencode($id) . '&v=' . $version,
+            ];
         }
 
         return ['url' => null];
     }
 
+    public function getActionProfilePicContent(Request $request, Response $response): void
+    {
+        $id = $request->getQueryParam('id');
+
+        if (!$id) {
+            throw new NotFound('Avatar not found.');
+        }
+
+        $payload = $this->getAvatarStorageService()->getAvatarContent($id);
+
+        if (!$payload) {
+            throw new NotFound('Avatar not found.');
+        }
+
+        $response->setHeader('Content-Type', $payload['contentType'] ?? 'image/jpeg');
+        $response->setHeader('Cache-Control', 'public, max-age=86400');
+        $response->writeBody($payload['body'] ?? '');
+    }
+
     public function postActionLogout(Request $request, Response $response): array
     {
         $result = $this->getWhatsAppClient()->terminateSession();
+
+        if ($result) {
+            $this->getSessionLifecycleService()->markDisconnected(
+                $this->getWhatsAppClient()->getSessionId(),
+                ['source' => 'logout']
+            );
+        }
+
         return ['success' => $result];
     }
 
@@ -355,72 +343,16 @@ class WhatsApp extends Base
             throw new BadRequest('Phone/chatId and message required');
         }
 
-        // 1. Send via API
-        $result = $this->getWhatsAppClient()->sendMessage($phone, $message);
-        $sent = $result['success'] ?? false;
+        $result = $this->getMessageDispatchService()->sendMessage($phone, $message);
 
-        $messageId = null;
-        if (isset($result['message']) && isset($result['message']['id'])) {
-            // Handle different wwebjs ID structures
-            $msgIdObj = $result['message']['id'];
-            $messageId = is_array($msgIdObj) ? ($msgIdObj['_serialized'] ?? null) : $msgIdObj;
-        } else if (isset($result['data']) && isset($result['data']['id'])) {
-            $msgIdObj = $result['data']['id'];
-            $messageId = is_array($msgIdObj) ? ($msgIdObj['_serialized'] ?? null) : $msgIdObj;
-        }
-
-        // 2. Save to DB
-        if ($sent) {
-            $entityManager = $this->getContainer()->get('entityManager');
-            $realId = $messageId ?: uniqid('sent_');
-            $storedMessageId = $realId;
-
-            try {
-                $msgEntity = $this->upsertStoredMessage($entityManager, [
-                    'body' => $message,
-                    'chatId' => $phone,
-                    'fromMe' => true,
-                    'timestamp' => time(),
-                    'status' => 'Sent',
-                    'messageId' => $realId,
-                ]);
-
-                $storedMessageId = $msgEntity->get('messageId') ?: $storedMessageId;
-            } catch (\PDOException $e) {
-                if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
-                    throw $e;
-                }
-            }
-
-            // 3. 🔥 Broadcast via WebSocket in real-time
-            try {
-                $wsService = $this->getWebSocketService();
-                $wsService->broadcastMessage($phone, [
-                    'id' => $storedMessageId,
-                    'body' => $message,
-                    'chatId' => $phone,
-                    'fromMe' => true,
-                    'timestamp' => time(),
-                    'ack' => 1,
-                    'status' => 'Sent'
-                ]);
-
-                $GLOBALS['log']->info('WhatsApp message broadcasted via WebSocket: ' . $storedMessageId);
-            } catch (\Throwable $e) {
-                // Ignore WebSocket errors to prevent blocking message sending
-                $GLOBALS['log']->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
-            }
-
+        if ($result['success'] ?? false) {
             return [
                 'success' => true,
-                'messageId' => $storedMessageId
+                'messageId' => $result['messageId'] ?? null,
             ];
         }
 
-        return [
-            'success' => false,
-            'error' => $result['error'] ?? 'Unknown error'
-        ];
+        return $result;
     }
 
     public function postActionSaveSettings(Request $request, Response $response): array
@@ -457,71 +389,7 @@ class WhatsApp extends Base
         $data = $request->getParsedBody();
         $GLOBALS['log']->info('WhatsApp webhook received', (array) $data);
 
-        $payload = null;
-        if (isset($data->data) && isset($data->data->body)) {
-            $payload = $data->data;
-        } else if (isset($data->data) && isset($data->data->message) && isset($data->data->message->body)) {
-            $payload = $data->data->message;
-        }
-
-        if ($payload) {
-            $body = $payload->body ?? '';
-            $from = is_object($payload->from ?? null) ? ($payload->from->_serialized ?? '') : ($payload->from ?? '');
-            $to = is_object($payload->to ?? null) ? ($payload->to->_serialized ?? '') : ($payload->to ?? '');
-            $timestamp = $payload->timestamp ?? time();
-
-            if ($body === 'status@broadcast')
-                return ['success' => true];
-
-            $entityManager = $this->getContainer()->get('entityManager');
-            $msgId = $payload->id->_serialized ?? $payload->id ?? null;
-
-            if ($msgId) {
-                $exists = $entityManager->getRepository('WhatsAppMessage')->where(['messageId' => $msgId])->findOne();
-                if ($exists)
-                    return ['success' => true];
-            }
-
-            $fromMe = $payload->fromMe ?? false;
-            $chatId = $fromMe ? $to : $from;
-            $status = $fromMe ? 'Sent' : 'Received';
-
-            try {
-                $msgEntity = $this->upsertStoredMessage($entityManager, [
-                    'body' => $body,
-                    'chatId' => $chatId,
-                    'fromMe' => $fromMe,
-                    'timestamp' => $timestamp,
-                    'status' => $status,
-                    'messageId' => $msgId,
-                ]);
-            } catch (\PDOException $e) {
-                if ($e->getCode() != 23000 && strpos($e->getMessage(), '1062') === false) {
-                    throw $e;
-                }
-                $msgEntity = $msgId
-                    ? $entityManager->getRepository('WhatsAppMessage')->where(['messageId' => $msgId])->findOne()
-                    : null;
-            }
-
-            // 🔥 Broadcast via WebSocket
-            try {
-                $wsService = $this->getWebSocketService();
-                $wsService->broadcastMessage($chatId, [
-                    'id' => $msgEntity ? ($msgEntity->get('messageId') ?: $msgEntity->getId()) : ($msgId ?: uniqid('recv_')),
-                    'body' => $body,
-                    'chatId' => $chatId,
-                    'fromMe' => $fromMe,
-                    'timestamp' => $timestamp,
-                    'ack' => $fromMe ? 1 : 0,
-                    'status' => $status
-                ]);
-
-                $GLOBALS['log']->info('WhatsApp incoming message broadcasted via WebSocket: ' . ($msgEntity ? ($msgEntity->get('messageId') ?: $msgEntity->getId()) : ($msgId ?: 'unknown')));
-            } catch (\Throwable $e) {
-                $GLOBALS['log']->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
-            }
-        }
+        $this->getMessageDispatchService()->processWebhookData($data);
 
         return ['success' => true];
     }

@@ -1,0 +1,73 @@
+{
+    "fields": {
+        "sessionId": {
+            "type": "varchar",
+            "required": true,
+            "len": 100,
+            "index": true
+        },
+        "chatId": {
+            "type": "varchar",
+            "required": true,
+            "len": 100,
+            "index": true
+        },
+        "participantWaId": {
+            "type": "varchar",
+            "len": 120,
+            "index": true
+        },
+        "contactLinkId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
+        "status": {
+            "type": "enum",
+            "options": ["open", "idle", "closed", "archived"],
+            "default": "open"
+        },
+        "channel": {
+            "type": "enum",
+            "options": ["whatsapp"],
+            "default": "whatsapp"
+        },
+        "ownerUserId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
+        "startedAt": {
+            "type": "datetime",
+            "required": true,
+            "index": true
+        },
+        "lastMessageAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "timeoutAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "endedAt": {
+            "type": "datetime"
+        },
+        "durationSeconds": {
+            "type": "int",
+            "default": 0
+        },
+        "metadata": {
+            "type": "jsonObject"
+        }
+    },
+    "collection": {
+        "sortBy": "lastMessageAt",
+        "asc": false
+    },
+    "indexes": {
+        "sessionChat": {
+            "columns": ["sessionId", "chatId", "status"]
+        }
+    }
+}

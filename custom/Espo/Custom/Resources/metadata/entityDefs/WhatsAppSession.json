@@ -1,0 +1,78 @@
+{
+    "fields": {
+        "sessionId": {
+            "type": "varchar",
+            "required": true,
+            "len": 100,
+            "index": true,
+            "unique": true
+        },
+        "lifecycleState": {
+            "type": "enum",
+            "options": [
+                "qr_ready",
+                "qr_scanned",
+                "authenticating",
+                "authenticated",
+                "bootstrap_started",
+                "contacts_syncing",
+                "history_syncing",
+                "avatars_syncing",
+                "ready",
+                "degraded",
+                "disabled",
+                "disconnected"
+            ],
+            "default": "disconnected"
+        },
+        "rawState": {
+            "type": "varchar",
+            "len": 100
+        },
+        "isConnected": {
+            "type": "bool",
+            "default": false
+        },
+        "phoneNumber": {
+            "type": "varchar",
+            "len": 50
+        },
+        "bootstrapPhase": {
+            "type": "varchar",
+            "len": 100
+        },
+        "syncProgress": {
+            "type": "int",
+            "default": 0
+        },
+        "connectedAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "disconnectedAt": {
+            "type": "datetime"
+        },
+        "lastSyncAt": {
+            "type": "datetime"
+        },
+        "lastEventAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "lastError": {
+            "type": "text"
+        },
+        "contextData": {
+            "type": "jsonObject"
+        }
+    },
+    "collection": {
+        "sortBy": "lastEventAt",
+        "asc": false
+    },
+    "indexes": {
+        "sessionLifecycle": {
+            "columns": ["sessionId", "lifecycleState"]
+        }
+    }
+}

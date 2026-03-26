@@ -40,6 +40,20 @@ class MinioService
         return $key;
     }
 
+    public function uploadContents(Uploadable $entity, string $contents, string $filename, string $contentType): string
+    {
+        $key = $entity->getObjectKey() . '/' . $filename;
+
+        $this->client->putObject([
+            'Bucket' => $entity->getBucketName(),
+            'Key' => $key,
+            'Body' => $contents,
+            'ContentType' => $contentType,
+        ]);
+
+        return $key;
+    }
+
     /**
      * Scarica il contenuto di un file da MinIO.
      */
@@ -51,6 +65,21 @@ class MinioService
         ]);
 
         return (string) $result['Body'];
+    }
+
+    public function getObject(string $bucket, string $key): array
+    {
+        $result = $this->client->getObject([
+            'Bucket' => $bucket,
+            'Key' => $key,
+        ]);
+
+        return [
+            'body' => (string) $result['Body'],
+            'contentType' => $result['ContentType'] ?? 'application/octet-stream',
+            'lastModified' => isset($result['LastModified']) ? (string) $result['LastModified'] : null,
+            'contentLength' => $result['ContentLength'] ?? null,
+        ];
     }
 
     /**

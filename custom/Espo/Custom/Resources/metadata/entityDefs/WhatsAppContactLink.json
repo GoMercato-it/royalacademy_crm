@@ -1,0 +1,59 @@
+{
+    "fields": {
+        "waId": {
+            "type": "varchar",
+            "required": true,
+            "len": 120,
+            "index": true,
+            "unique": true
+        },
+        "normalizedPhone": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
+        "displayName": {
+            "type": "varchar",
+            "len": 255
+        },
+        "linkedEntityType": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
+        "linkedEntityId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
+        "avatarStorage": {
+            "type": "enum",
+            "options": ["local", "minio"],
+            "default": "minio"
+        },
+        "avatarObjectKey": {
+            "type": "varchar",
+            "len": 255
+        },
+        "avatarMimeType": {
+            "type": "varchar",
+            "len": 100
+        },
+        "avatarFetchedAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "metadata": {
+            "type": "jsonObject"
+        }
+    },
+    "collection": {
+        "sortBy": "avatarFetchedAt",
+        "asc": false
+    },
+    "indexes": {
+        "linkLookup": {
+            "columns": ["linkedEntityType", "linkedEntityId"]
+        }
+    }
+}

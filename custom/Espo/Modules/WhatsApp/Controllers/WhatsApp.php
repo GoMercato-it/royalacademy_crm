@@ -8,6 +8,7 @@ use Espo\Core\Exceptions\BadRequest;
 use Espo\Custom\Core\WhatsApp\WhatsAppClient;
 use Espo\Core\InjectableFactory;
 use Espo\Modules\WhatsApp\Services\WebSocketService;
+use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 
 /**
  * WhatsApp Module Controller with WebSocket real-time support
@@ -30,6 +31,13 @@ class WhatsApp extends Base
         return $factory->create(WebSocketService::class);
     }
 
+    private function getMessageDispatchService(): MessageDispatchService
+    {
+        /** @var InjectableFactory $factory */
+        $factory = $this->getContainer()->get('injectableFactory');
+        return $factory->create(MessageDispatchService::class);
+    }
+
     /**
      * Send a message via WhatsApp
      * Broadcasts immediately via WebSocket to all subscribers
@@ -44,40 +52,7 @@ class WhatsApp extends Base
             throw new BadRequest('chatId and message are required');
         }
 
-        try {
-            $result = $this->getWhatsAppClient()->sendMessage($chatId, $message);
-            
-            if ($result['success'] ?? false) {
-                $messageId = $result['message']['id']['_serialized'] ?? $result['message']['id'] ?? uniqid('msg_');
-                
-                // Broadcast via WebSocket immediately
-                $wsService = $this->getWebSocketService();
-                $wsService->broadcastMessage($chatId, [
-                    'id' => $messageId,
-                    'body' => $message,
-                    'timestamp' => time(),
-                    'fromMe' => true,
-                    'ack' => 1,
-                    'status' => 'Sent'
-                ]);
-                
-                return [
-                    'success' => true,
-                    'messageId' => $messageId,
-                    'message' => 'Message sent and broadcasted'
-                ];
-            }
-            
-            return [
-                'success' => false,
-                'error' => $result['error'] ?? 'Failed to send message'
-            ];
-        } catch (\Throwable $e) {
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
-        }
+        return $this->getMessageDispatchService()->sendMessage($chatId, $message);
     }
 
     /**

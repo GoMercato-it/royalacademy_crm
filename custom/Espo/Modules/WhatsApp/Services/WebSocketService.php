@@ -86,4 +86,53 @@ class WebSocketService
 
         $this->submission->submit($topic, null, $payload);
     }
+
+    public function broadcastLifecycleState(string $sessionId, string $state, array $data = []): void
+    {
+        $topic = 'WhatsApp';
+
+        $payload = [
+            'action' => 'lifecycle',
+            'data' => array_merge($data, [
+                'sessionId' => $sessionId,
+                'state' => $state,
+                'timestamp' => time(),
+            ]),
+        ];
+
+        $this->submission->submit($topic, null, $payload);
+    }
+
+    public function broadcastSyncProgress(string $sessionId, string $phase, int $progress, array $data = []): void
+    {
+        $topic = 'WhatsApp';
+
+        $payload = [
+            'action' => 'sync_progress',
+            'data' => array_merge($data, [
+                'sessionId' => $sessionId,
+                'phase' => $phase,
+                'progress' => $progress,
+                'timestamp' => time(),
+            ]),
+        ];
+
+        $this->submission->submit($topic, null, $payload);
+    }
+
+    public function broadcastConversationEvent(string $conversationId, string $event, array $data = []): void
+    {
+        $topic = 'WhatsApp';
+
+        $payload = [
+            'action' => 'conversation',
+            'data' => array_merge($data, [
+                'conversationId' => $conversationId,
+                'event' => $event,
+                'timestamp' => time(),
+            ]),
+        ];
+
+        $this->submission->submit($topic, null, $payload);
+    }
 }

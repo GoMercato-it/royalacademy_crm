@@ -10,6 +10,16 @@
             "len": 100,
             "index": true
         },
+        "sessionId": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
+        "conversationId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
         "fromMe": {
             "type": "bool",
             "default": false
@@ -20,6 +30,10 @@
             "index": true,
             "unique": true
         },
+        "bodyPreview": {
+            "type": "varchar",
+            "len": 255
+        },
         "status": {
             "type": "enum",
             "options": ["Sent", "Delivered", "Read", "Failed", "Received"],
@@ -28,6 +42,9 @@
         "timestamp": {
             "type": "datetime",
             "index": true
+        },
+        "payloadMeta": {
+            "type": "jsonObject"
         }
     },
     "collection": {
@@ -37,6 +54,9 @@
     "indexes": {
         "chatIdTimestamp": {
             "columns": ["chatId", "timestamp"]
+        },
+        "sessionIdTimestamp": {
+            "columns": ["sessionId", "timestamp"]
         }
     }
 }

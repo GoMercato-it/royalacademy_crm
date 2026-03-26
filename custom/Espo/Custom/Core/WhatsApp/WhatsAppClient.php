@@ -17,6 +17,11 @@ class WhatsAppClient
         $this->log = $log;
     }
 
+    public function getSessionId(): string
+    {
+        return $this->sessionId;
+    }
+
     private function getApiUrl(): string
     {
         return rtrim($this->config->get('whatsappApiUrl', 'http://whatsapp-api:3000'), '/');
