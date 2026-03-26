@@ -12,6 +12,7 @@
         isOpen: false,
         screen: 'login', // login | chatList | chat | contacts
         status: 'unknown',
+        isConnected: false,
         chats: [],
         messages: [],
         contacts: [],
@@ -19,6 +20,12 @@
         chatName: '',
         statusInterval: null,
         chatInterval: null,
+        messagePollInterval: null,
+        messagesLoading: false,
+        chatsLoading: false,
+        chatsPromise: null,
+        chatsLoadedAt: 0,
+        avatarCache: {},
         qrLibLoaded: false,
         lastQrString: null,
         subscribed: false,
@@ -29,7 +36,10 @@
     var config = {
         enabled: true,
         pollInterval: 1000,
-        statusCheckInterval: 5000
+        statusCheckInterval: 5000,
+        chatListRefreshInterval: 15000,
+        chatListCacheKey: 'wa-chat-list-cache-v1',
+        chatListCacheTtl: 12 * 60 * 60 * 1000
     };
 
     /* ── CSS Injection ──────────────────────────────────────────── */
@@ -66,6 +76,113 @@
         if (typeof Espo === 'undefined' || !Espo.Ajax) return Promise.reject('Espo not ready');
         if (method === 'GET') return Espo.Ajax.getRequest(url, data);
         return Espo.Ajax.postRequest(url, data);
+    }
+
+    function isConnectedStatus(status) {
+        var s = (status || '').toUpperCase();
+        return s === 'AUTHENTICATED' || s === 'CONNECTED';
+    }
+
+    function getChatListCache() {
+        try {
+            var raw = localStorage.getItem(config.chatListCacheKey);
+            if (!raw) return [];
+
+            var parsed = JSON.parse(raw);
+            if (!parsed || !Array.isArray(parsed.list)) return [];
+
+            if (parsed.savedAt && (Date.now() - parsed.savedAt) > config.chatListCacheTtl) {
+                localStorage.removeItem(config.chatListCacheKey);
+                return [];
+            }
+
+            return parsed.list;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function getSerializedChatId(chat) {
+        if (!chat) return '';
+
+        if (typeof chat === 'string') return chat;
+
+        if (chat._serialized) return chat._serialized;
+
+        if (chat.id) {
+            if (typeof chat.id === 'string') return chat.id;
+            if (chat.id._serialized) return chat.id._serialized;
+        }
+
+        return '';
+    }
+
+    function normalizeCachedLastMessage(message) {
+        if (!message) return null;
+
+        var messageId = getSerializedChatId(message.id);
+
+        return {
+            id: messageId ? {_serialized: messageId} : null,
+            body: message.body || '',
+            timestamp: message.timestamp || null,
+            fromMe: !!message.fromMe,
+            ack: message.ack,
+            status: message.status || null
+        };
+    }
+
+    function normalizeChatForCache(chat) {
+        var chatId = getSerializedChatId(chat);
+        if (!chatId) return null;
+
+        return {
+            id: {_serialized: chatId},
+            name: chat.name || '',
+            contact: chat.contact ? {
+                pushname: chat.contact.pushname || '',
+                name: chat.contact.name || ''
+            } : null,
+            lastMessage: normalizeCachedLastMessage(chat.lastMessage)
+        };
+    }
+
+    function saveChatListCache(chats) {
+        try {
+            var list = (chats || [])
+                .map(normalizeChatForCache)
+                .filter(Boolean)
+                .slice(0, 200);
+
+            localStorage.setItem(config.chatListCacheKey, JSON.stringify({
+                savedAt: Date.now(),
+                list: list
+            }));
+        } catch (e) {}
+    }
+
+    function renderCachedChatList() {
+        var cached = getChatListCache();
+        if (!cached.length) return false;
+
+        state.chats = cached;
+
+        if (state.screen === 'chatList') {
+            renderChatList(state.chats);
+        }
+
+        return true;
+    }
+
+    function renderChatListLoading(message) {
+        var el = _$('wa-chat-list');
+        if (!el) return;
+
+        el.innerHTML =
+            '<div class="wa-loading">' +
+                '<div class="wa-spinner"></div>' +
+                '<div class="wa-loading-text">' + esc(message || 'Loading chats...') + '</div>' +
+            '</div>';
     }
 
     /* ── Helpers for Contacts & Avatars ─────────────────────────── */
@@ -336,9 +453,19 @@
              _$('wa-panel-title').textContent = (name === 'chat' ? (state.chatName || 'Chat') : (name === 'contacts' ? 'Select Contact' : 'WhatsApp'));
         }
 
-        if (name !== 'chatList' && state.chatInterval) {
+        if (name === 'chatList') {
+            startChatListPolling();
+
+            if (!state.chats.length) {
+                renderCachedChatList();
+            }
+        } else if (state.chatInterval) {
             clearInterval(state.chatInterval);
             state.chatInterval = null;
+        }
+
+        if (name !== 'chat') {
+            stopMessagePolling();
         }
     }
 
@@ -354,18 +481,30 @@
 
             updateStatusUI();
 
-            var isConnected = r.isConnected || 
-                              state.status === 'CONNECTED' || 
-                              state.status === 'AUTHENTICATED';
+            var isConnected = r.isConnected || isConnectedStatus(state.status);
+            state.isConnected = isConnected;
+
+            if (!state.isOpen) {
+                return;
+            }
 
             if (isConnected) {
                 var loginScreen = _$('wa-screen-login');
                 if (state.screen === 'login' || (loginScreen && loginScreen.classList.contains('active'))) {
                     showScreen('chatList');
-                    loadChats();
+                    loadChats({silent: false});
                 } else if (!state.screen || state.screen === '') {
                      showScreen('chatList');
-                     loadChats();
+                     loadChats({silent: false});
+                } else if (
+                    state.screen === 'chatList' &&
+                    (
+                        !state.chats.length ||
+                        !state.chatsLoadedAt ||
+                        (Date.now() - state.chatsLoadedAt) > config.chatListRefreshInterval
+                    )
+                ) {
+                    loadChats({silent: !!state.chats.length});
                 }
                 
                 if (!state.subscribed) {
@@ -376,14 +515,12 @@
                      showScreen('login');
                 }
                 
-                if (state.chatInterval) {
-                    clearInterval(state.chatInterval);
-                    state.chatInterval = null;
-                }
+                stopMessagePolling();
             }
         }).catch(function (e) {
             console.error('WhatsApp Widget: Status check error', e);
             state.status = 'disconnected';
+            state.isConnected = false;
             config.enabled = false; // Disable widget if API check fails
 
             var btn = _$('whatsapp-floating-btn');
@@ -392,17 +529,13 @@
             updateStatusUI();
             if (state.isOpen) close();
             
-            if (state.chatInterval) {
-                clearInterval(state.chatInterval);
-                state.chatInterval = null;
-            }
+            stopMessagePolling();
         });
     }
 
     function updateStatusUI() {
         var el = _$('wa-panel-status');
-        var s = (state.status || '').toUpperCase();
-        var connected = s === 'AUTHENTICATED' || s === 'CONNECTED';
+        var connected = isConnectedStatus(state.status);
         
         if (el) {
             el.textContent = connected ? '\u25cf Connected' : ('\u25cb ' + (state.status || 'Disconnected'));
@@ -417,23 +550,31 @@
 
     function startPolling() {
         stopPolling();
-        state.statusInterval = setInterval(function () {
-            if (state.isOpen) checkStatus();
-        }, config.statusCheckInterval);
+        state.statusInterval = setInterval(checkStatus, config.statusCheckInterval);
     }
 
     function stopPolling() {
         if (state.statusInterval) { clearInterval(state.statusInterval); state.statusInterval = null; }
         if (state.chatInterval) { clearInterval(state.chatInterval); state.chatInterval = null; }
+        stopMessagePolling();
+    }
+
+    function startChatListPolling() {
+        if (state.chatInterval) return;
+
+        state.chatInterval = setInterval(function () {
+            if (!state.isOpen || state.screen !== 'chatList' || !state.isConnected) {
+                return;
+            }
+
+            loadChats({silent: true});
+        }, config.chatListRefreshInterval);
     }
 
     /* ── WebSocket Real-Time Subscription ───────────────────────── */
     /* ── WebSocket Real-Time Subscription ───────────────────────── */
     function subscribeToRealTime() {
         if (state.subscribed) return;
-
-        // Start polling as a primary/fallback mechanism
-        startMessagePolling();
 
         if (typeof ab === 'undefined' || !ab.Session) {
             console.warn('WA Widget: ab.Session not found. Relying on polling.');
@@ -531,7 +672,11 @@
     }
 
     function pollMessages() {
+        if (state.messagesLoading) return;
+
         if (state.screen === 'chat' && state.chatId) {
+            state.messagesLoading = true;
+
             api('GET', 'WhatsApp/action/getChatMessages', {
                 chatId: state.chatId,
                 limit: 50
@@ -582,11 +727,9 @@
                 }
             }).catch(function(e) {
                 console.warn('WA Widget: Message polling failed', e);
+            }).then(function() {
+                state.messagesLoading = false;
             });
-        }
-
-        if (state.screen === 'chatList') {
-            loadChats();
         }
     }
 
@@ -755,11 +898,70 @@
     }
 
     /* ── Data Loading ───────────────────────────────────────────── */
-    function loadChats() {
-        api('GET', 'WhatsApp/action/getChats').then(function (r) {
-            state.chats = r.list || [];
-            if (state.screen === 'chatList') renderChatList(state.chats);
+    function loadChats(options) {
+        options = options || {};
+
+        if (state.chatsLoading) {
+            return state.chatsPromise || Promise.resolve(state.chats);
+        }
+
+        if (!options.force && state.chatsLoadedAt && (Date.now() - state.chatsLoadedAt) < 5000) {
+            if (state.screen === 'chatList' && state.chats.length) {
+                renderChatList(state.chats);
+            }
+
+            return Promise.resolve(state.chats);
+        }
+
+        if (!state.chats.length) {
+            var hadCachedChats = renderCachedChatList();
+
+            if (!hadCachedChats && state.screen === 'chatList' && !options.silent) {
+                renderChatListLoading('Loading chats...');
+            }
+        }
+
+        state.chatsLoading = true;
+
+        state.chatsPromise = api('GET', 'WhatsApp/action/getChats').then(function (r) {
+            var list = Array.isArray(r.list) ? r.list : [];
+
+            if (list.length) {
+                state.chats = list;
+                state.chatsLoadedAt = Date.now();
+                saveChatListCache(list);
+            }
+
+            if (state.screen === 'chatList') {
+                if (state.chats.length) {
+                    renderChatList(state.chats);
+                } else {
+                    renderChatListLoading('Waiting for chats to sync...');
+                }
+            }
+
+            return state.chats;
+        }).catch(function (e) {
+            console.warn('WA Widget: Chat list load failed', e);
+
+            if (!state.chats.length && state.screen === 'chatList') {
+                if (!renderCachedChatList()) {
+                    renderChatListLoading('Unable to load chats. Retrying...');
+                }
+            }
+
+            return state.chats;
+        }).then(function (result) {
+            state.chatsLoading = false;
+            state.chatsPromise = null;
+            return result;
+        }, function (error) {
+            state.chatsLoading = false;
+            state.chatsPromise = null;
+            throw error;
         });
+
+        return state.chatsPromise;
     }
 
     function loadContacts() {
