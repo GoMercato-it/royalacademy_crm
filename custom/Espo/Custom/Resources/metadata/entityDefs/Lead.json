@@ -1,0 +1,30 @@
+{
+    "fields": {
+        "status": {
+            "options": [
+                "New",
+                "Contacted",
+                "Undecided",
+                "Interested",
+                "Converted",
+                "Lost"
+            ],
+            "default": "New",
+            "style": {
+                "New": null,
+                "Contacted": "primary",
+                "Undecided": "info",
+                "Interested": "warning",
+                "Converted": "success",
+                "Lost": "danger"
+            },
+            "notActualOptions": [
+                "Converted",
+                "Lost",
+                "Recycled",
+                "Dead"
+            ],
+            "required": true
+        }
+    }
+}

@@ -1,0 +1,12 @@
+{
+    "options": {
+        "status": {
+            "New": "Nuovo",
+            "Contacted": "Contattato",
+            "Interested": "Interessato",
+            "Undecided": "Indeciso",
+            "Converted": "Convertito",
+            "Lost": "Perso"
+        }
+    }
+}

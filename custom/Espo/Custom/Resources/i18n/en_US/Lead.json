@@ -1,0 +1,12 @@
+{
+    "options": {
+        "status": {
+            "New": "New",
+            "Contacted": "Contacted",
+            "Interested": "Interested",
+            "Undecided": "Undecided",
+            "Converted": "Converted",
+            "Lost": "Lost"
+        }
+    }
+}

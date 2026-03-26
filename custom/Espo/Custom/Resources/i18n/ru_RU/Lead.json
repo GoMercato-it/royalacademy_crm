@@ -1,0 +1,12 @@
+{
+    "options": {
+        "status": {
+            "New": "Новый",
+            "Contacted": "Ответили",
+            "Interested": "Интересуется",
+            "Undecided": "Не уверен",
+            "Converted": "Студент",
+            "Lost": "Потерян"
+        }
+    }
+}
