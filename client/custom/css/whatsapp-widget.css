@@ -238,40 +238,75 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  padding: 24px;
+  padding: 12px;
   background-color: var(--wa-wall-bg);
   background-image: url("https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png");
   background-size: 360px;
-  overflow-y: auto;
-  align-items: center; /* Center everything horizontally */
-  justify-content: center; /* Center everything vertically */
+  overflow: hidden;
+  align-items: center;
+  justify-content: center;
 }
 #wa-panel-root.wa-dark .wa-login-container {
   background-blend-mode: overlay;
   background-color: var(--wa-wall-bg);
 }
-.wa-login-text {
-  margin-bottom: 20px;
+.wa-login-card {
   width: 100%;
+  max-width: 320px;
+  margin: 0;
+  padding: 16px 16px 14px;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(255, 255, 255, 0.88));
+  box-shadow: 0 12px 32px rgba(17, 27, 33, 0.12);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+  overflow: hidden;
+}
+#wa-panel-root.wa-dark .wa-login-card {
+  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(20, 31, 38, 0.94), rgba(17, 27, 33, 0.9));
+}
+.wa-login-text {
+  width: 100%;
+  max-width: none;
   text-align: center;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
 }
 .wa-login-title {
-  font-size: 20px;
-  font-weight: 300;
+  font-size: 17px;
+  font-weight: 600;
   color: var(--wa-text-main);
-  margin-bottom: 16px;
+  margin-bottom: 0;
+  line-height: 1.2;
 }
 .wa-login-steps {
-  margin: 0 auto 20px auto; /* Center the list block */
-  padding-left: 20px;
+  width: 100%;
+  margin: 0;
+  padding: 12px 14px 12px 32px;
   color: var(--wa-text-main);
-  font-size: 14px;
-  line-height: 1.6;
-  text-align: left; /* Keep text left-aligned */
-  max-width: 280px; /* Constrain width for better reading */
+  font-size: 12.5px;
+  line-height: 1.38;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 18px;
+  box-sizing: border-box;
+}
+#wa-panel-root.wa-dark .wa-login-steps {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.08);
 }
 .wa-login-steps li {
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 .wa-login-steps strong {
   font-weight: 600;
@@ -282,23 +317,27 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
   width: 100%;
+  max-width: none;
+  min-height: 0;
+  margin: 0 auto;
+  gap: 8px;
 }
 
 .wa-connect-btn {
   background-color: #00a884;
   color: white;
   border: none;
-  padding: 10px 24px;
+  padding: 9px 18px;
   border-radius: 24px;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: background-color 0.2s;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  /* align-self: flex-start; REMOVED */
-  margin-top: 10px;
+  width: 100%;
+  max-width: 188px;
+  margin-top: 0;
 }
 .wa-connect-btn:hover {
   background-color: #008f6f;
@@ -310,15 +349,42 @@
 
 .wa-qr-container {
   background: white;
-  padding: 8px;
-  border-radius: 4px;
+  padding: 10px;
+  border-radius: 18px;
   border: 1px solid var(--wa-border);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
-  width: 220px;
-  height: 220px;
+  box-shadow: 0 10px 26px rgba(17, 27, 33, 0.12);
+  width: 196px;
+  height: 196px;
   display: flex;
   align-items: center;
   justify-content: center;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+.wa-qr-container > * {
+  margin: 0 auto;
+}
+.wa-qr-generated {
+  width: 176px;
+  height: 176px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  border-radius: 0;
+  background: #ffffff;
+}
+.wa-qr-container canvas,
+.wa-qr-container img,
+.wa-qr-container table {
+  display: block;
+  margin: 0 auto;
+  width: 176px !important;
+  height: 176px !important;
+  border-radius: 0;
+}
+.wa-qr-container td {
+  padding: 0;
 }
 .wa-qr-container img {
   max-width: 100%;
@@ -414,11 +480,27 @@
 .wa-login-desc {
   color: var(--wa-text-sec);
 }
-.wa-qr-container {
-  background: white;
-  padding: 10px;
-  border-radius: 8px;
+#wa-btn-refresh-qr {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 116px;
+  width: auto;
+  height: auto;
+  padding: 8px 14px;
+  border-radius: 999px;
+  margin: 0 auto;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--wa-text-main);
+  background: rgba(255, 255, 255, 0.92);
   border: 1px solid var(--wa-border);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+#wa-btn-refresh-qr:hover {
+  background: #ffffff;
 }
 
 /* Chat List Search */

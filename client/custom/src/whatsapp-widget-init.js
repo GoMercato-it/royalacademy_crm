@@ -1174,14 +1174,14 @@
                 return;
             }
 
-            container.innerHTML = '<div id="wa-qr-generated" style="width:220px;height:220px;margin:0 auto;"></div>';
+            container.innerHTML = '<div id="wa-qr-generated" class="wa-qr-generated"></div>';
             container.setAttribute('data-wa-qr-rendered', 'true');
             state.lastQrString = qrValue;
 
             new QRCodeLib(document.getElementById('wa-qr-generated'), {
                 text: qrValue,
-                width: 220,
-                height: 220
+                width: 176,
+                height: 176
             });
 
             showQrUi();
@@ -1810,22 +1810,24 @@
             '  </div>',
             '  <div class="wa-screen active" id="wa-screen-login">',
             '     <div class="wa-login-container">',
-            '       <div class="wa-login-text">',
-            '         <div class="wa-login-title">Use WhatsApp on your computer</div>',
-            '         <ol class="wa-login-steps">',
-            '           <li>Open WhatsApp on your phone</li>',
-            '           <li>Tap <strong>Menu</strong> or <strong>Settings</strong> and select <strong>Linked Devices</strong></li>',
-            '           <li>Tap on <strong>Link a Device</strong></li>',
-            '           <li>Tap on <strong>Link a Device</strong></li>',
-            '           <li>Point your phone to this screen to capture the code</li>',
-            '         </ol>',
+            '       <div class="wa-login-card">',
+            '         <div class="wa-login-text">',
+            '           <div class="wa-login-title">Use WhatsApp on your computer</div>',
+            '           <ol class="wa-login-steps">',
+            '             <li>Open WhatsApp on your phone</li>',
+            '             <li>Tap <strong>Menu</strong> or <strong>Settings</strong> and select <strong>Linked Devices</strong></li>',
+            '             <li>Tap on <strong>Link a Device</strong></li>',
+            '             <li>Tap on <strong>Link a Device</strong></li>',
+            '             <li>Point your phone to this screen to capture the code</li>',
+            '           </ol>',
+            '         </div>',
             '         <button class="wa-connect-btn" id="wa-connect-btn">Generate QR Code</button>',
-            '       </div>',
-            '       <div class="wa-qr-wrapper">',
-            '          <div class="wa-spinner" id="wa-qr-spinner" style="display:none"></div>',
-            '          <div class="wa-qr-container" id="wa-qr-container" style="display:none">',
-            '          </div>',
-            '          <button class="wa-icon-btn" id="wa-btn-refresh-qr" style="display:none;margin-top:10px" title="Refresh QR">\u21BB Refresh QR</button>',
+            '         <div class="wa-qr-wrapper">',
+            '            <div class="wa-spinner" id="wa-qr-spinner" style="display:none"></div>',
+            '            <div class="wa-qr-container" id="wa-qr-container" style="display:none">',
+            '            </div>',
+            '            <button class="wa-icon-btn" id="wa-btn-refresh-qr" style="display:none" title="Refresh QR">\u21BB Refresh QR</button>',
+            '         </div>',
             '       </div>',
             '     </div>',
             '  </div>',
