@@ -146,11 +146,9 @@ class WhatsApp extends Base
     public function getActionQrCode(Request $request, Response $response): array
     {
         $qr = $this->getWhatsAppClient()->getQRCode();
-        $qrImage = $this->getWhatsAppClient()->getQRCodeImage();
 
         return [
             'qr' => $qr,
-            'qrImage' => $qrImage
         ];
     }
 

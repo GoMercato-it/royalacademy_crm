@@ -38,41 +38,6 @@ class WhatsAppClient
         return $response['qr'] ?? null;
     }
 
-    public function getQRCodeImage(): ?string
-    {
-        $url = $this->getApiUrl() . "/session/qr/{$this->sessionId}/image";
-        $apiKey = $this->getApiKey();
-
-        if (empty($apiKey)) {
-            return null;
-        }
-
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL, $url);
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, 5);
-        curl_setopt($ch, CURLOPT_TIMEOUT, 15);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, [
-            'X-API-KEY: ' . $apiKey,
-        ]);
-
-        $response = curl_exec($ch);
-        $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
-
-
-        if (
-            $httpCode === 200 &&
-            $response &&
-            is_string($contentType) &&
-            str_starts_with(strtolower($contentType), 'image/')
-        ) {
-            return 'data:' . ($contentType ?: 'image/png') . ';base64,' . base64_encode($response);
-        }
-
-        return null;
-    }
-
     public function getSessionStatus(): string
     {
         $response = $this->makeRequest('GET', "/session/status/{$this->sessionId}");

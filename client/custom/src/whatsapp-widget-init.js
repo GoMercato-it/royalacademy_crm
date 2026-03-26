@@ -1160,16 +1160,6 @@
         if (_$('wa-connect-btn')) _$('wa-connect-btn').style.display = 'none';
     }
 
-    function renderQrImage(src) {
-        var container = _$('wa-qr-container');
-        if (!container) return;
-
-        container.innerHTML =
-            '<img id="wa-qr-img" src="' + esc(src) + '" alt="Scan me" style="display:block; width: 100%; height: auto;"/>';
-
-        showQrUi();
-    }
-
     function renderQrValue(qrValue) {
         if (!qrValue) return;
 
@@ -1216,11 +1206,14 @@
         if (spinner) spinner.style.display = 'block';
         if (qrc) {
             qrc.style.display = 'none';
-            qrc.innerHTML = '<img id="wa-qr-img" src="" alt="Scan me" style="display:block; width: 100%; height: auto;"/>';
+            qrc.innerHTML = '';
             qrc.removeAttribute('data-wa-qr-rendered');
         }
 
-        api('GET', 'WhatsApp/action/login').then(function () {
+        api('GET', 'WhatsApp/action/login').then(function (r) {
+            if (r && r.qrCode) {
+                renderQrValue(r.qrCode);
+            }
             state.qrPollTimeout = setTimeout(function() { pollQR(0); }, 2000);
         }).catch(function () {
              state.sessionStarting = false;
@@ -1238,10 +1231,7 @@
         }
 
         api('GET', 'WhatsApp/action/qrCode').then(function (r) {
-            if (r.qrImage) {
-                renderQrImage(r.qrImage);
-                state.qrPollTimeout = setTimeout(function() { pollQR(attempts + 1); }, 3000);
-            } else if (r.qr) {
+            if (r.qr) {
                 renderQrValue(r.qr);
                 state.qrPollTimeout = setTimeout(function() { pollQR(attempts + 1); }, 3000); 
             } else {
@@ -1834,7 +1824,6 @@
             '       <div class="wa-qr-wrapper">',
             '          <div class="wa-spinner" id="wa-qr-spinner" style="display:none"></div>',
             '          <div class="wa-qr-container" id="wa-qr-container" style="display:none">',
-            '             <img id="wa-qr-img" src="" alt="Scan me" style="display:block; width: 100%; height: auto;"/>',
             '          </div>',
             '          <button class="wa-icon-btn" id="wa-btn-refresh-qr" style="display:none;margin-top:10px" title="Refresh QR">\u21BB Refresh QR</button>',
             '       </div>',
