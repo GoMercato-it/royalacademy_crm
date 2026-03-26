@@ -464,22 +464,6 @@
   pointer-events: none;
 }
 
-/* Screens */
-.wa-screen {
-  display: none;
-  flex: 1;
-  flex-direction: column;
-  overflow: hidden;
-  background: var(--wa-bg-panel);
-}
-.wa-screen.active {
-  display: flex;
-}
-
-/* Styles update */
-.wa-login-desc {
-  color: var(--wa-text-sec);
-}
 #wa-btn-refresh-qr {
   display: inline-flex;
   align-items: center;
