@@ -61,7 +61,12 @@ class WhatsAppClient
         $contentType = curl_getinfo($ch, CURLINFO_CONTENT_TYPE);
 
 
-        if ($httpCode === 200 && $response) {
+        if (
+            $httpCode === 200 &&
+            $response &&
+            is_string($contentType) &&
+            str_starts_with(strtolower($contentType), 'image/')
+        ) {
             return 'data:' . ($contentType ?: 'image/png') . ';base64,' . base64_encode($response);
         }
 

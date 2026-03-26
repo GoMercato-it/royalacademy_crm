@@ -27,6 +27,7 @@
         chatsLoadedAt: 0,
         avatarCache: {},
         qrLibLoaded: false,
+        qrLibPromise: null,
         lastQrString: null,
         subscribed: false,
         wsTopicUri: null,
@@ -404,10 +405,20 @@
     /* ── Helpers for Contacts & Avatars ─────────────────────────── */
     function extractPhoneNumber(contactId) {
         if (typeof contactId === 'string') {
-            return contactId.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@us', '');
+            return contactId
+                .replace('@c.us', '')
+                .replace('@s.whatsapp.net', '')
+                .replace('@g.us', '')
+                .replace('@lid', '')
+                .replace('@us', '');
         }
         if (contactId && contactId._serialized) {
-            return contactId._serialized.replace('@c.us', '').replace('@s.whatsapp.net', '').replace('@g.us', '').replace('@us', '');
+            return contactId._serialized
+                .replace('@c.us', '')
+                .replace('@s.whatsapp.net', '')
+                .replace('@g.us', '')
+                .replace('@lid', '')
+                .replace('@us', '');
         }
         if (contactId && contactId.user) {
             return contactId.user;
@@ -415,46 +426,175 @@
         return '';
     }
 
-    function deduplicateContacts(contacts) {
-        var seen = {};
-        var unique = [];
-        
-        contacts.forEach(function(contact) {
-            var id = (contact.id && contact.id._serialized) || contact.id;
-            if (!id || typeof id !== 'string') return;
-            
-            if (id.indexOf('@lid') !== -1 || id === 'status@broadcast') return;
+    function getContactId(contact) {
+        if (!contact) return '';
+        return (contact.id && contact.id._serialized) || contact.id || '';
+    }
 
-            var phone = extractPhoneNumber(id);
-            var isGroup = id.indexOf('@g.us') !== -1;
-            
-            if (isGroup) {
-                if (!seen[id]) {
-                    seen[id] = contact;
-                    unique.push(contact);
-                }
+    function getContactServer(contact) {
+        var id = getContactId(contact);
+        var parts = id.split('@');
+        return parts.length > 1 ? parts[1] : '';
+    }
+
+    function getContactDisplayName(contact) {
+        if (!contact) return '';
+        return (contact.name || contact.pushname || contact.shortName || '').trim();
+    }
+
+    function hasMeaningfulContactName(contact) {
+        return !!getContactDisplayName(contact);
+    }
+
+    function normalizeContactLike(contact) {
+        if (!contact) return null;
+
+        var normalized = {};
+        Object.keys(contact).forEach(function(key) {
+            normalized[key] = contact[key];
+        });
+
+        normalized.id = getContactId(contact);
+        normalized.number = normalized.number || extractPhoneNumber(normalized.id);
+        normalized.isGroup = !!(normalized.isGroup || normalized.id.indexOf('@g.us') !== -1);
+        normalized._displayName = getContactDisplayName(normalized);
+        normalized._hasChat = !!normalized._hasChat;
+        normalized._source = normalized._source || 'contact';
+
+        return normalized.id ? normalized : null;
+    }
+
+    function makeContactFromChat(chat) {
+        var id = getSerializedChatId(chat);
+        if (!id) return null;
+
+        return normalizeContactLike({
+            id: id,
+            name: (chat.name || (chat.contact && chat.contact.pushname) || '').trim(),
+            pushname: (chat.contact && chat.contact.pushname) || '',
+            shortName: (chat.contact && chat.contact.shortName) || '',
+            number: extractPhoneNumber(id),
+            isGroup: !!chat.isGroup,
+            _hasChat: true,
+            _source: 'chat'
+        });
+    }
+
+    function getContactPriority(contact) {
+        var score = 0;
+        var server = getContactServer(contact);
+
+        if (contact._hasChat) score += 50;
+        if (hasMeaningfulContactName(contact)) score += 25;
+        if (contact.isMyContact) score += 10;
+        if (server === 'lid' && contact._hasChat) score += 5;
+        if (server === 'c.us' && !contact._hasChat) score += 3;
+        if (contact.isGroup) score -= 5;
+
+        return score;
+    }
+
+    function pickPreferredContact(existing, candidate) {
+        if (!existing) return candidate;
+        if (!candidate) return existing;
+
+        var existingPriority = getContactPriority(existing);
+        var candidatePriority = getContactPriority(candidate);
+
+        if (candidatePriority !== existingPriority) {
+            return candidatePriority > existingPriority ? candidate : existing;
+        }
+
+        if (getContactId(candidate).length < getContactId(existing).length) {
+            return candidate;
+        }
+
+        return existing;
+    }
+
+    function shouldSkipContact(contact) {
+        var id = getContactId(contact);
+        if (!id || id === 'status@broadcast') return true;
+
+        var server = getContactServer(contact);
+        var meaningfulName = hasMeaningfulContactName(contact);
+
+        if (server === 'lid' && contact.isBlocked && !meaningfulName) return true;
+        if (!contact.isGroup && !meaningfulName && !contact.isMyContact && !contact._hasChat) return true;
+
+        return false;
+    }
+
+    function deduplicateContacts(contacts, chats) {
+        var byId = {};
+        var merged = [];
+        var nameBuckets = {};
+
+        function addContact(contact) {
+            var normalized = normalizeContactLike(contact);
+            if (!normalized || shouldSkipContact(normalized)) return;
+
+            var id = normalized.id;
+            if (!byId[id]) {
+                byId[id] = normalized;
+                merged.push(normalized);
                 return;
             }
 
-            if (!seen[phone]) {
-                seen[phone] = contact;
-                unique.push(contact);
-            } else {
-                var existing = seen[phone];
-                var existingHasName = !!(existing.name || existing.pushname);
-                var newHasName = !!(contact.name || contact.pushname);
-                
-                if (!existingHasName && newHasName) {
-                    var idx = unique.indexOf(existing);
-                    if (idx !== -1) {
-                        unique[idx] = contact;
-                        seen[phone] = contact;
-                    }
-                }
+            var preferred = pickPreferredContact(byId[id], normalized);
+            if (preferred !== byId[id]) {
+                var idx = merged.indexOf(byId[id]);
+                byId[id] = preferred;
+                if (idx !== -1) merged[idx] = preferred;
             }
+        }
+
+        (contacts || []).forEach(addContact);
+        (chats || []).forEach(function(chat) {
+            addContact(makeContactFromChat(chat));
         });
-        
-        return unique;
+
+        merged.forEach(function(contact) {
+            var name = contact._displayName.toLowerCase();
+            if (!name || contact.isGroup) return;
+            if (!nameBuckets[name]) nameBuckets[name] = [];
+            nameBuckets[name].push(contact);
+        });
+
+        Object.keys(nameBuckets).forEach(function(name) {
+            var bucket = nameBuckets[name];
+            if (bucket.length !== 2) return;
+
+            var first = bucket[0];
+            var second = bucket[1];
+            var firstServer = getContactServer(first);
+            var secondServer = getContactServer(second);
+
+            if (firstServer === secondServer) return;
+            if (![firstServer, secondServer].includes('lid')) return;
+            if (![firstServer, secondServer].includes('c.us')) return;
+
+            var preferred = pickPreferredContact(first, second);
+            var rejected = preferred === first ? second : first;
+            delete byId[rejected.id];
+        });
+
+        merged = merged.filter(function(contact) {
+            return byId[contact.id] === contact;
+        });
+
+        merged.sort(function(a, b) {
+            var priorityDelta = getContactPriority(b) - getContactPriority(a);
+            if (priorityDelta) return priorityDelta;
+
+            var aName = (a._displayName || a.number || '').toLowerCase();
+            var bName = (b._displayName || b.number || '').toLowerCase();
+            if (aName < bName) return -1;
+            if (aName > bName) return 1;
+            return 0;
+        });
+
+        return merged;
     }
 
     function getInitials(name) {
@@ -514,8 +654,8 @@
 
     function getAvatarHtml(contact, size) {
         size = size || 40;
-        var id = (contact.id && contact.id._serialized) ? contact.id._serialized : (contact.id || '');
-        var name = contact.name || contact.pushname || extractPhoneNumber(id);
+        var id = getContactId(contact);
+        var name = getContactDisplayName(contact) || extractPhoneNumber(id);
         var initials = getInitials(name);
         var color = stringToColor(name);
         var picUrl = null;
@@ -972,9 +1112,98 @@
     }
 
     /* ── Session / QR ───────────────────────────────────────────── */
+    function ensureQrLib() {
+        if (window.QRCode) {
+            state.qrLibLoaded = true;
+            return Promise.resolve(window.QRCode);
+        }
+
+        if (state.qrLibPromise) {
+            return state.qrLibPromise;
+        }
+
+        state.qrLibPromise = new Promise(function(resolve, reject) {
+            var existing = document.querySelector('script[data-wa-qr-lib="true"]');
+            if (existing) {
+                existing.addEventListener('load', function() {
+                    state.qrLibLoaded = !!window.QRCode;
+                    resolve(window.QRCode);
+                }, { once: true });
+                existing.addEventListener('error', reject, { once: true });
+                return;
+            }
+
+            var script = document.createElement('script');
+            script.src = 'client/lib/qrcode.js';
+            script.async = true;
+            script.setAttribute('data-wa-qr-lib', 'true');
+            script.onload = function() {
+                state.qrLibLoaded = !!window.QRCode;
+                resolve(window.QRCode);
+            };
+            script.onerror = reject;
+            document.head.appendChild(script);
+        }).then(function(result) {
+            state.qrLibPromise = null;
+            return result;
+        }).catch(function(error) {
+            state.qrLibPromise = null;
+            throw error;
+        });
+
+        return state.qrLibPromise;
+    }
+
+    function showQrUi() {
+        if (_$('wa-qr-container')) _$('wa-qr-container').style.display = 'flex';
+        if (_$('wa-qr-spinner')) _$('wa-qr-spinner').style.display = 'none';
+        if (_$('wa-connect-btn')) _$('wa-connect-btn').style.display = 'none';
+    }
+
+    function renderQrImage(src) {
+        var container = _$('wa-qr-container');
+        if (!container) return;
+
+        container.innerHTML =
+            '<img id="wa-qr-img" src="' + esc(src) + '" alt="Scan me" style="display:block; width: 100%; height: auto;"/>';
+
+        showQrUi();
+    }
+
+    function renderQrValue(qrValue) {
+        if (!qrValue) return;
+
+        ensureQrLib().then(function(QRCodeLib) {
+            if (!QRCodeLib) return;
+
+            var container = _$('wa-qr-container');
+            if (!container) return;
+
+            if (state.lastQrString === qrValue && container.getAttribute('data-wa-qr-rendered') === 'true') {
+                showQrUi();
+                return;
+            }
+
+            container.innerHTML = '<div id="wa-qr-generated" style="width:220px;height:220px;margin:0 auto;"></div>';
+            container.setAttribute('data-wa-qr-rendered', 'true');
+            state.lastQrString = qrValue;
+
+            new QRCodeLib(document.getElementById('wa-qr-generated'), {
+                text: qrValue,
+                width: 220,
+                height: 220
+            });
+
+            showQrUi();
+        }).catch(function(error) {
+            console.warn('WA Widget: Failed to render QR from raw string', error);
+        });
+    }
+
     function startSession() {
         if (state.sessionStarting) return;
         state.sessionStarting = true;
+        state.lastQrString = null;
 
         if (state.qrPollTimeout) { clearTimeout(state.qrPollTimeout); state.qrPollTimeout = null; }
 
@@ -985,7 +1214,11 @@
 
         if (btn) { btn.disabled = true; btn.textContent = 'Connecting\u2026'; }
         if (spinner) spinner.style.display = 'block';
-        if (qrc) qrc.style.display = 'none';
+        if (qrc) {
+            qrc.style.display = 'none';
+            qrc.innerHTML = '<img id="wa-qr-img" src="" alt="Scan me" style="display:block; width: 100%; height: auto;"/>';
+            qrc.removeAttribute('data-wa-qr-rendered');
+        }
 
         api('GET', 'WhatsApp/action/login').then(function () {
             state.qrPollTimeout = setTimeout(function() { pollQR(0); }, 2000);
@@ -1006,12 +1239,10 @@
 
         api('GET', 'WhatsApp/action/qrCode').then(function (r) {
             if (r.qrImage) {
-                var img = _$('wa-qr-img');
-                if (img) img.src = r.qrImage;
-                if (_$('wa-qr-container')) _$('wa-qr-container').style.display = 'flex';
-                if (_$('wa-qr-spinner')) _$('wa-qr-spinner').style.display = 'none';
-                if (_$('wa-connect-btn')) _$('wa-connect-btn').style.display = 'none';
-                
+                renderQrImage(r.qrImage);
+                state.qrPollTimeout = setTimeout(function() { pollQR(attempts + 1); }, 3000);
+            } else if (r.qr) {
+                renderQrValue(r.qr);
                 state.qrPollTimeout = setTimeout(function() { pollQR(attempts + 1); }, 3000); 
             } else {
                  api('GET', 'WhatsApp/action/status').then(function(s) {
@@ -1106,8 +1337,14 @@
         showScreen('contacts');
         var list = _$('wa-contacts-list');
         if (list) list.innerHTML = '<div class="wa-loading"><div class="wa-spinner"></div></div>';
-        api('GET', 'WhatsApp/action/getContacts').then(function(r) {
-            state.contacts = deduplicateContacts(r.list || []);
+
+        Promise.all([
+            loadChats().catch(function() { return state.chats || []; }),
+            api('GET', 'WhatsApp/action/getContacts').catch(function() { return { list: [] }; })
+        ]).then(function(results) {
+            var chats = Array.isArray(results[0]) ? results[0] : [];
+            var response = results[1] || {};
+            state.contacts = deduplicateContacts(response.list || [], chats);
             renderContacts(state.contacts);
         });
     }
@@ -1292,9 +1529,10 @@
         if (q) {
              q = q.toLowerCase();
              contacts = contacts.filter(function(c) {
-                 var n = (c.name || c.pushname || c.number || '');
+                 var n = getContactDisplayName(c) || c.number || '';
                  if (typeof n !== 'string') n = String(n);
-                 return n.toLowerCase().indexOf(q) !== -1;
+                 var number = (c.number || '').toLowerCase();
+                 return n.toLowerCase().indexOf(q) !== -1 || number.indexOf(q) !== -1;
              });
         }
 
@@ -1306,8 +1544,8 @@
         }
         
         var html = contacts.map(function(c) {
-             var name = c.name || c.pushname || c.number;
-             var id = (c.id && c.id._serialized) || c.id;
+             var name = getContactDisplayName(c) || c.number;
+             var id = getContactId(c);
              var isGroup = id && id.indexOf('@g.us') !== -1;
              var number = c.number || extractPhoneNumber(id);
              

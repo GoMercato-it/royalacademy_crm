@@ -296,16 +296,30 @@ class WhatsApp extends Base
         $url = $this->getWhatsAppClient()->getProfilePicUrl($id);
 
         if ($url) {
-            // 2. Download the image locally to bypass CORS and expiration
-            $ch = curl_init($url);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, 10);
-            // Some CDNs require user agent
-            curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-            $imageData = curl_exec($ch);
-            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-            curl_close($ch);
+            $imageData = null;
+            $httpCode = 0;
+
+            if (str_starts_with($url, 'data:image/')) {
+                $parts = explode(',', $url, 2);
+                if (count($parts) === 2) {
+                    $decoded = base64_decode($parts[1], true);
+                    if ($decoded !== false && $decoded !== '') {
+                        $imageData = $decoded;
+                        $httpCode = 200;
+                    }
+                }
+            } else {
+                // 2. Download the image locally to bypass CORS and expiration
+                $ch = curl_init($url);
+                curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+                curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+                curl_setopt($ch, CURLOPT_TIMEOUT, 10);
+                // Some CDNs require user agent
+                curl_setopt($ch, CURLOPT_USERAGENT, 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+                $imageData = curl_exec($ch);
+                $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+                curl_close($ch);
+            }
 
             if ($httpCode === 200 && $imageData) {
                 if (!is_dir(dirname($path))) {
