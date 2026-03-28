@@ -46,6 +46,18 @@
             "type": "datetime",
             "index": true
         },
+        "lastMessagePreview": {
+            "type": "varchar",
+            "len": 255
+        },
+        "lastMessageDirection": {
+            "type": "enum",
+            "options": ["incoming", "outgoing"]
+        },
+        "messageCount": {
+            "type": "int",
+            "default": 0
+        },
         "timeoutAt": {
             "type": "datetime",
             "index": true

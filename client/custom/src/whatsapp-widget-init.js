@@ -30,6 +30,8 @@
         qrLibPromise: null,
         lastQrString: null,
         subscribed: false,
+        webSocketManager: null,
+        webSocketHandler: null,
         wsTopicUri: null,
         wsRetryCount: 0
     };
@@ -136,13 +138,11 @@
         }
     }
 
-    function getStoredAuthToken() {
+    function getStoredAuthString() {
         var auth = localStorage.getItem('espo-user-auth');
 
         if (!auth) {
-            var cookieMatch = document.cookie.match(new RegExp('(^| )auth-token=([^;]+)'));
-
-            return cookieMatch ? cookieMatch[2] : '';
+            return '';
         }
 
         if (auth.charAt(0) === '"') {
@@ -150,6 +150,14 @@
                 auth = JSON.parse(auth);
             } catch (e) {}
         }
+
+        return auth;
+    }
+
+    function getStoredAuthToken() {
+        var auth = getStoredAuthString();
+
+        if (!auth) return '';
 
         try {
             var decoded = atob(auth);
@@ -161,6 +169,61 @@
 
             return '';
         }
+    }
+
+    function getWebSocketLocationParts() {
+        var protocolPart = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+        var url = window.location.host;
+
+        if (protocolPart === 'wss://') {
+            url += '/wss';
+        }
+
+        return {
+            protocolPart: protocolPart,
+            url: url
+        };
+    }
+
+    function ensureWidgetWebSocketManager() {
+        return new Promise(function(resolve, reject) {
+            if (state.webSocketManager) {
+                resolve(state.webSocketManager);
+                return;
+            }
+
+            if (typeof Espo === 'undefined' || !Espo.loader || !Espo.loader.require) {
+                reject(new Error('Espo loader not available'));
+                return;
+            }
+
+            Espo.loader.require('di', function(diModule) {
+                Espo.loader.require('web-socket-manager', function(WebSocketManagerModule) {
+                    try {
+                        var WebSocketManagerClass =
+                            (WebSocketManagerModule && WebSocketManagerModule.default) || WebSocketManagerModule;
+                        var container = diModule && diModule.container;
+
+                        if (!container || !container.get || !WebSocketManagerClass) {
+                            reject(new Error('Espo DI webSocketManager is unavailable'));
+                            return;
+                        }
+
+                        var manager = container.get(WebSocketManagerClass);
+
+                        if (!manager) {
+                            reject(new Error('Espo webSocketManager instance not found'));
+                            return;
+                        }
+
+                        state.webSocketManager = manager;
+                        resolve(manager);
+                    } catch (error) {
+                        reject(error);
+                    }
+                });
+            });
+        });
     }
 
     function applyMessageDeliveryState(message) {
@@ -334,6 +397,42 @@
         });
     }
 
+    function getKnownLastMessageForChat(chatId) {
+        if (!chatId || !Array.isArray(state.chats) || !state.chats.length) return null;
+
+        var chat = state.chats.find(function(c) {
+            return chatIdsEqual(c, chatId);
+        });
+
+        if (!chat || !chat.lastMessage) return null;
+
+        var normalized = normalizeMessageRecord({
+            id: getSerializedChatId(chat.lastMessage.id) || chat.lastMessage.id,
+            messageId: getSerializedChatId(chat.lastMessage.id) || chat.lastMessage.id,
+            body: chat.lastMessage.body || '',
+            timestamp: chat.lastMessage.timestamp || null,
+            fromMe: !!chat.lastMessage.fromMe,
+            ack: chat.lastMessage.ack,
+            status: chat.lastMessage.status || null,
+            chatId: chatId
+        });
+
+        if (!normalized || !normalized.body) return null;
+
+        return normalized;
+    }
+
+    function mergeKnownLastMessage(chatId, messages) {
+        var normalizedMessages = (messages || []).map(normalizeMessageRecord).filter(Boolean);
+        var knownLastMessage = getKnownLastMessageForChat(chatId);
+
+        if (!knownLastMessage) {
+            return mergeMessageCollections([], normalizedMessages);
+        }
+
+        return mergeMessageCollections(normalizedMessages, [knownLastMessage]);
+    }
+
     function normalizeCachedLastMessage(message) {
         if (!message) return null;
 
@@ -342,6 +441,7 @@
         return {
             id: messageId ? {_serialized: messageId} : null,
             body: message.body || '',
+            bodyPreview: message.bodyPreview || message.body || '',
             timestamp: message.timestamp || null,
             fromMe: !!message.fromMe,
             ack: message.ack,
@@ -362,6 +462,70 @@
             } : null,
             lastMessage: normalizeCachedLastMessage(chat.lastMessage)
         };
+    }
+
+    function getMessagePreviewText(message) {
+        if (!message) return '';
+
+        var body = (message.body || '').trim();
+        if (body) return body;
+
+        var bodyPreview = (message.bodyPreview || '').trim();
+        if (bodyPreview) return bodyPreview;
+
+        return '';
+    }
+
+    function sortChatsByLastMessage() {
+        state.chats.sort(function(a, b) {
+            var tA = (a.lastMessage && a.lastMessage.timestamp) ? normalizeTimestamp(a.lastMessage.timestamp) : 0;
+            var tB = (b.lastMessage && b.lastMessage.timestamp) ? normalizeTimestamp(b.lastMessage.timestamp) : 0;
+            return tB - tA;
+        });
+    }
+
+    function updateChatLastMessage(chatId, message, chatName) {
+        if (!chatId || !message) return false;
+
+        var normalizedMessage = normalizeMessageRecord(message);
+        if (!normalizedMessage) return false;
+
+        var preview = getMessagePreviewText(normalizedMessage);
+        if (!preview) return false;
+
+        normalizedMessage.body = normalizedMessage.body || preview;
+        normalizedMessage.bodyPreview = normalizedMessage.bodyPreview || preview;
+
+        var updated = false;
+
+        for (var i = 0; i < state.chats.length; i++) {
+            if (!chatIdsEqual(state.chats[i], chatId)) continue;
+
+            var current = state.chats[i];
+            current.lastMessage = {
+                id: normalizedMessage.messageId ? {_serialized: normalizedMessage.messageId} : normalizedMessage.id,
+                body: normalizedMessage.body,
+                bodyPreview: normalizedMessage.bodyPreview,
+                timestamp: normalizedMessage.timestamp,
+                fromMe: !!normalizedMessage.fromMe,
+                ack: normalizedMessage.ack,
+                status: normalizedMessage.status || null
+            };
+
+            if (chatName && !current.name) {
+                current.name = chatName;
+            }
+
+            updated = true;
+            break;
+        }
+
+        if (updated) {
+            sortChatsByLastMessage();
+            saveChatListCache(state.chats);
+        }
+
+        return updated;
     }
 
     function saveChatListCache(chats) {
@@ -812,7 +976,9 @@
         if (name === 'chatList') {
             startChatListPolling();
 
-            if (!state.chats.length) {
+            if (state.chats.length) {
+                renderChatList(state.chats);
+            } else {
                 renderCachedChatList();
             }
         } else if (state.chatInterval) {
@@ -916,15 +1082,7 @@
     }
 
     function startChatListPolling() {
-        if (state.chatInterval) return;
-
-        state.chatInterval = setInterval(function () {
-            if (!state.isOpen || state.screen !== 'chatList' || !state.isConnected) {
-                return;
-            }
-
-            loadChats({silent: true});
-        }, config.chatListRefreshInterval);
+        return;
     }
 
     /* ── WebSocket Real-Time Subscription ───────────────────────── */
@@ -932,75 +1090,88 @@
     function subscribeToRealTime() {
         if (state.subscribed) return;
 
-        if (typeof ab === 'undefined' || !ab.Session) {
-            console.warn('WA Widget: ab.Session not found. Relying on polling.');
-            return;
-        }
-        
-        var protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        var portStr = window.location.port;
-        var port = portStr ? ':' + portStr : '';
-        
-        var userId = getStoredUserId();
-        var authToken = getStoredAuthToken();
+        ensureWidgetWebSocketManager().then(function(manager) {
+            var locationParts = getWebSocketLocationParts();
+            var auth = getStoredAuthString();
+            var userId = getStoredUserId();
+            var shouldReconnect =
+                manager.protocolPart !== locationParts.protocolPart ||
+                manager.url !== locationParts.url;
 
-        if (!authToken) {
-            console.warn('WA Widget: No authToken found for WS!');
-            return;
-        }
+            manager.protocolPart = locationParts.protocolPart;
+            manager.url = locationParts.url;
 
-        var url = protocol + '//' + window.location.hostname + port;
-        if (protocol === 'wss:') {
-            url += '/wss';
-        }
-        url += '?authToken=' + encodeURIComponent(authToken) + '&userId=' + encodeURIComponent(userId);
+            if (typeof manager.setEnabled === 'function' && !manager.isEnabled()) {
+                manager.setEnabled();
+            }
 
-        try {
-            state.connection = new ab.Session(url, function() {
-                state.subscribed = true;
-                state.connection.subscribe('WhatsApp', function(topic, data) {
+            if (shouldReconnect && manager.connection && !manager.isConnected) {
+                manager.connection = null;
+                manager.isConnecting = false;
+            }
+
+            if (!manager.connection && auth && userId) {
+                manager.connect(auth, userId);
+            } else if (!manager.isConnected && !manager.isConnecting && auth && userId) {
+                manager.connect(auth, userId);
+            }
+
+            if (!state.webSocketHandler) {
+                state.webSocketHandler = function(topic, data) {
                     if (typeof data === 'string') {
-                        try { data = JSON.parse(data); } catch(e) { return; }
+                        try { data = JSON.parse(data); } catch (e) { return; }
                     }
+
+                    if (!data) return;
+
                     var action = data.action;
                     var payload = data.data || data;
-                    var chatId = data.chatId || payload.chatId;
+                    var chatId = data.chatId || (payload && payload.chatId);
 
-                    if (payload && !payload.chatId) {
+                    if (payload && !payload.chatId && chatId) {
                         payload.chatId = chatId;
                     }
 
-                    if (state.screen === 'chat' && state.chatId && chatIdsEqual(chatId, state.chatId)) {
-                        if (action === 'message') {
-                            onRealTimeMessage(payload, 'message');
-                        } else if (action === 'message_ack') {
-                            onRealTimeMessage(payload, 'message_ack');
-                        }
-                    } else {
-                        if (state.isOpen) loadChats();
+                    if (action === 'message' || action === 'message_ack') {
+                        onRealTimeMessage(payload, action);
+                        return;
                     }
-                });
-            }, function(code, reason) {
-                state.subscribed = false;
-                // Rely on polling...
-            });
-        } catch(e) {
-            console.warn('WA Widget: Exception starting WAMP session', e);
-        }
+
+                    if (action === 'lifecycle') {
+                        var nextStatus = payload && payload.state ? payload.state : 'disconnected';
+                        state.status = nextStatus;
+                        state.isConnected = isConnectedStatus(nextStatus);
+                        updateStatusUI();
+
+                        if (!state.isConnected && state.screen !== 'login') {
+                            showScreen('login');
+                        }
+                    }
+                };
+            }
+
+            if (state.webSocketHandler) {
+                manager.unsubscribe('WhatsApp', state.webSocketHandler);
+            }
+            manager.subscribe('WhatsApp', state.webSocketHandler);
+            state.subscribed = true;
+
+            if (state.statusInterval && state.isConnected) {
+                clearInterval(state.statusInterval);
+                state.statusInterval = null;
+            }
+            stopMessagePolling();
+            if (state.chatInterval) {
+                clearInterval(state.chatInterval);
+                state.chatInterval = null;
+            }
+        }).catch(function(error) {
+            console.warn('WA Widget: Failed to attach to Espo webSocketManager', error);
+        });
     }
 
     function startMessagePolling() {
-        // Always restart: clear any old interval first
-        if (state.messagePollInterval) {
-            clearInterval(state.messagePollInterval);
-            state.messagePollInterval = null;
-        }
-        state.messagePollingActive = true;
-
-        // Poll immediately on start (don't wait for first interval)
-        pollMessages();
-
-        state.messagePollInterval = setInterval(pollMessages, config.pollInterval);
+        return;
     }
 
     function pollMessages() {
@@ -1010,9 +1181,11 @@
             state.messagesLoading = true;
 
             fetchStoredMessages(state.chatId, 50).then(function(messages) {
-                if (!messages.length) return;
+                var knownMerged = mergeKnownLastMessage(state.chatId, messages);
 
-                var merged = mergeMessageCollections(state.messages, messages);
+                if (!knownMerged.list.length) return;
+
+                var merged = mergeMessageCollections(state.messages, knownMerged.list);
 
                 if (merged.changed) {
                     state.messages = merged.list;
@@ -1040,6 +1213,10 @@
         msg = normalizeMessageRecord(msg);
 
         if (!msg) return;
+
+        if (action === 'message') {
+            updateChatLastMessage(msg.chatId, msg, state.chatId && chatIdsEqual(state.chatId, msg.chatId) ? state.chatName : '');
+        }
 
         if (state.screen === 'chat' && chatIdsEqual(state.chatId, msg.chatId)) {
             if (action === 'message_ack') {
@@ -1070,9 +1247,7 @@
                 var cId = state.chats[j].id._serialized || state.chats[j].id;
                 if (chatIdsEqual(cId, msg.chatId)) {
                     chatFound = true;
-                    if (action === 'message') {
-                        state.chats[j].lastMessage = msg;
-                    } else if (action === 'message_ack' && state.chats[j].lastMessage) {
+                    if (action === 'message_ack' && state.chats[j].lastMessage) {
                         var lmId = getMessageIdentity(state.chats[j].lastMessage);
                         var msgId = getMessageIdentity(msg);
                         if (lmId === msgId) {
@@ -1087,6 +1262,8 @@
             if (!chatFound && action === 'message') {
                 loadChats({silent: true, force: true});
             } else if (state.screen === 'chatList') {
+                sortChatsByLastMessage();
+                saveChatListCache(state.chats);
                 renderChatList(state.chats);
             }
         }
@@ -1353,7 +1530,7 @@
             chatId: chatId, 
             limit: 100 
         }).then(function (r) {
-            var merged = mergeMessageCollections([], (r && r.list) || []);
+            var merged = mergeKnownLastMessage(chatId, (r && r.list) || []);
 
             state.messages = merged.list;
 
@@ -1366,8 +1543,6 @@
             fallbackToLastMessage(chatId);
         });
 
-        // Start polling for new messages every second
-        startMessagePolling();
     }
 
     function fallbackToLastMessage(chatId) {
@@ -1375,10 +1550,12 @@
         if (!container) return;
         
         fetchStoredMessages(chatId, 50).then(function(list) {
-            if (list && list.length > 0) {
-                state.messages = list;
+            var merged = mergeKnownLastMessage(chatId, list || []);
+
+            if (merged.list.length > 0) {
+                state.messages = merged.list;
                 renderMessages(state.messages);
-                showSystemMessage('Loaded ' + list.length + ' messages from local storage.');
+                showSystemMessage('Loaded ' + merged.list.length + ' messages from local storage.');
                 return;
             }
             fallbackToLastMessageFromList(chatId, container);
@@ -1429,12 +1606,15 @@
             id: tempId,
             tempId: tempId,
             body: text,
+            bodyPreview: text,
+            chatId: state.chatId,
             timestamp: Math.floor(now.getTime() / 1000),
             fromMe: true,
             _optimistic: true
         };
 
         state.messages.push(optimisticMsg);
+        updateChatLastMessage(state.chatId, optimisticMsg, state.chatName);
         renderMessages(state.messages);
 
         api('POST', 'WhatsApp/action/sendMessage', { chatId: state.chatId, message: text }).then(function (r) {
@@ -1442,11 +1622,13 @@
                  for (var i = 0; i < state.messages.length; i++) {
                      if (state.messages[i].tempId === tempId) {
                          state.messages[i].id = r.messageId;
+                         state.messages[i].messageId = r.messageId;
                          state.messages[i]._optimistic = false;
                          if (!state.messages[i].ack && state.messages[i].ack !== 0) {
                              state.messages[i].ack = 1; 
                              state.messages[i].status = 'Sent';
                          }
+                         updateChatLastMessage(state.chatId, state.messages[i], state.chatName);
                          renderMessages(state.messages);
                          break;
                      }
@@ -1490,7 +1672,7 @@
         var html = chats.map(function (c) {
             var chatId = c.id._serialized || c.id;
             var name = c.name || extractPhoneNumber(chatId);
-            var last = (c.lastMessage && c.lastMessage.body) || '';
+            var last = getMessagePreviewText(c.lastMessage);
             var time = (c.lastMessage && c.lastMessage.timestamp) ? formatTime(c.lastMessage.timestamp) : '';
             
             return '<li class="wa-chat-item" data-cid="' + esc(chatId) + '" data-cname="' + esc(name) + '">' +

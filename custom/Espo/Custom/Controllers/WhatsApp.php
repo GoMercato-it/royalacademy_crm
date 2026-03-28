@@ -12,6 +12,7 @@ use Espo\Modules\WhatsApp\Services\WebSocketService;
 use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 use Espo\Modules\WhatsApp\Services\SessionLifecycleService;
 use Espo\Modules\WhatsApp\Services\AvatarStorageService;
+use Espo\Modules\WhatsApp\Services\WorkflowActionService;
 
 class WhatsApp extends Base
 {
@@ -51,6 +52,13 @@ class WhatsApp extends Base
         /** @var InjectableFactory $factory */
         $factory = $this->getContainer()->get('injectableFactory');
         return $factory->create(AvatarStorageService::class);
+    }
+
+    private function getWorkflowActionService(): WorkflowActionService
+    {
+        /** @var InjectableFactory $factory */
+        $factory = $this->getContainer()->get('injectableFactory');
+        return $factory->create(WorkflowActionService::class);
     }
 
     private function normalizeTimestampValue($timestamp): int
@@ -353,6 +361,23 @@ class WhatsApp extends Base
         }
 
         return $result;
+    }
+
+    public function postActionExecuteAction(Request $request, Response $response): array
+    {
+        $data = $request->getParsedBody();
+        $payload = is_object($data) ? get_object_vars($data) : (array) $data;
+        $action = (string) ($payload['action'] ?? '');
+
+        if ($action === '') {
+            throw new BadRequest('action is required');
+        }
+
+        try {
+            return $this->getWorkflowActionService()->execute($action, $payload);
+        } catch (\RuntimeException $e) {
+            throw new BadRequest($e->getMessage());
+        }
     }
 
     public function postActionSaveSettings(Request $request, Response $response): array

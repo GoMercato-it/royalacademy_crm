@@ -8,7 +8,7 @@ The system is not a generic CRM customization. It is a combined CRM + student op
 - course and course-section management,
 - gated PDF study materials,
 - CSV-driven lead intake,
-- WhatsApp messaging and notifications,
+- WhatsApp messaging, conversation tracking, and notifications,
 - DDEV-based local runtime with MinIO and WAHA/WhatsApp API support.
 
 ## What The System Does
@@ -20,6 +20,7 @@ At a business level, the current codebase supports these flows:
 - manage **Students** as a dedicated entity linked 1:1 with `User`;
 - manage **Course Access** records that assign a student to a course and track active/completed state;
 - store and display **WhatsApp messages** inside the CRM;
+- track **WhatsApp sessions, conversations, and contact/avatar links** for deeper module development;
 - import **Leads from remote CSV URLs** on demand or on a schedule;
 - expose course PDFs through the CRM and portal with access checks;
 - automatically synchronize some business rules through Espo hooks.
@@ -35,28 +36,30 @@ The repository contains a meaningful amount of custom code and configuration, no
 
 ### Implemented And Actively Wired
 
-- `Course`, `CourseSection`, `CourseAccess`, `Student`, `CsvLeadImport`, `WhatsAppMessage` entities.
+- `Course`, `CourseSection`, `CourseAccess`, `Student`, `CsvLeadImport`, `WhatsAppMessage`, `WhatsAppSession`, `WhatsAppConversation`, `WhatsAppContactLink` entities.
 - custom routes for WhatsApp, CSV import actions, and PDF streaming.
 - WhatsApp settings screen in admin.
 - global floating WhatsApp widget injected into the Espo frontend.
 - PDF reader panel on `CourseSection`.
 - scheduled CSV import job plus console command to ensure the job exists.
 - MinIO-backed PDF storage for course sections.
+- MinIO-backed WhatsApp avatar storage.
 - automatic student profile creation from `User` with role `Student`.
 - automatic course-team sync down to course sections.
 - automatic course-access timestamping.
 - automatic deactivation logic on student expulsion.
+- shared WhatsApp service layer for widget + future full module/workflow automation.
 
 ### Partially Implemented / Needs Revalidation
 
 - WhatsApp automatic message on new lead creation exists, but the current status handling and success checks look fragile.
 - PDF access control is enforced server-side, but page slicing is only enforced in the frontend viewer; the backend still streams the full file.
 - WebSocket metadata suggests finer-grained access control, but the actual broadcasting service publishes on a broader `WhatsApp` topic.
+- the large dedicated WhatsApp workspace/module foundation exists in backend/domain design, but its full CRM UI is not built yet.
 
 ### Legacy / Drift Signals
 
 - the repository, domains, and some upstream references still carry `gomercato` naming;
-- there are `.bak` client definition files under `custom/Espo/Custom/Resources/metadata/clientDefs`;
 - there are parallel layout definitions under both `Resources/layouts` and `Resources/metadata/layouts`;
 - there are two WhatsApp controllers in different namespaces;
 - the old README described infrastructure that does not match the current checked-in DDEV setup.
@@ -184,13 +187,81 @@ Technical store for WhatsApp chat messages.
 Key fields:
 
 - `body`
+- `bodyPreview`
 - `chatId`
+- `sessionId`
+- `conversationId`
 - `fromMe`
 - `messageId`
 - `status`: `Sent`, `Delivered`, `Read`, `Failed`, `Received`
 - `timestamp`
+- `payloadMeta`
 
 Used as the local persistence layer for WhatsApp history, deduplication, and chat rendering.
+
+### `WhatsAppSession`
+
+Tracks transport and bootstrap lifecycle for the active WhatsApp session.
+
+Key fields:
+
+- `sessionId`
+- `lifecycleState`
+- `rawState`
+- `isConnected`
+- `phoneNumber`
+- `bootstrapPhase`
+- `syncProgress`
+- `connectedAt`
+- `disconnectedAt`
+- `lastSyncAt`
+- `lastEventAt`
+- `lastError`
+- `contextData`
+
+Used as the backend source of truth for session state and future non-widget WhatsApp UI flows.
+
+### `WhatsAppConversation`
+
+Tracks CRM-facing conversation state on top of raw WhatsApp messages.
+
+Key fields:
+
+- `sessionId`
+- `chatId`
+- `participantWaId`
+- `contactLinkId`
+- `status`: `open`, `idle`, `closed`, `archived`
+- `startedAt`
+- `lastMessageAt`
+- `lastMessagePreview`
+- `lastMessageDirection`
+- `messageCount`
+- `timeoutAt`
+- `endedAt`
+- `durationSeconds`
+- `metadata`
+
+Used as the conversation layer for ownership, reporting, SLA-style logic, and later workflow automation.
+
+### `WhatsAppContactLink`
+
+Maps WhatsApp identities to CRM entities and stores avatar metadata.
+
+Key fields:
+
+- `waId`
+- `normalizedPhone`
+- `displayName`
+- `linkedEntityType`
+- `linkedEntityId`
+- `avatarStorage`
+- `avatarObjectKey`
+- `avatarMimeType`
+- `avatarFetchedAt`
+- `metadata`
+
+Used for contact linking, avatar storage, and future contact-to-record reconciliation.
 
 ## Main Functional Flows
 
@@ -244,21 +315,28 @@ Default mapping already handles many common column names such as:
 The WhatsApp integration is split into two parts:
 
 - an admin setup screen for API settings;
-- a globally injected floating chat widget in the frontend.
+- a globally injected floating chat widget in the frontend;
+- a shared backend foundation for a future full WhatsApp CRM module and workflow actions.
 
 The backend flow is:
 
 1. the CRM talks to a WAHA / wwebjs-compatible API service;
 2. inbound webhook data is accepted by `POST /WhatsApp/action/webhook`;
-3. messages are stored in `WhatsAppMessage`;
-4. outbound and inbound messages are broadcast through Espo WebSocket submission;
-5. the widget renders live messages and falls back to polling when realtime is unavailable.
+3. chat history is fetched from the working `chat/fetchMessages` endpoint, with `syncHistory` fallback when needed;
+4. normalized displayable messages are stored in `WhatsAppMessage`;
+5. conversation/session state is tracked in `WhatsAppConversation` and `WhatsAppSession`;
+6. avatars are stored through `WhatsAppContactLink` and served from MinIO-backed storage;
+7. outbound and inbound events are broadcast through Espo WebSocket submission;
+8. the widget renders live updates through the Espo WebSocket channel; initial list/history bootstrap still uses HTTP endpoints.
 
 Additional behavior:
 
-- chat history can be merged from API and DB;
+- chat history is merged from API and DB, with local persistence used as the stable history layer;
 - duplicate messages are avoided using `messageId`;
-- profile pictures can be cached locally in `client/custom/whatsapp-avatars/`.
+- empty technical WhatsApp notifications are filtered so they do not become fake user chats;
+- contacts are deduplicated across multiple WhatsApp identity forms such as `@c.us` and `@lid`;
+- profile pictures are cached through the backend and stored in MinIO, not in a frontend-local avatar folder;
+- a workflow-ready action layer exists so future CRM automation can call WhatsApp actions without binding directly to widget code.
 
 ## Frontend Customization
 
@@ -267,7 +345,7 @@ The frontend is not built with a separate Node pipeline in this repository. Ther
 ### Custom UI Pieces
 
 - **WhatsApp settings page** via custom controller/view.
-- **Global floating WhatsApp widget** with chat list, login/QR flow, contacts, message sending, theme switching, and realtime/polling behavior.
+- **Global floating WhatsApp widget** with chat list, login/QR flow, contacts, avatar loading, message sending, theme switching, and websocket-driven realtime behavior.
 - **CourseSection PDF reader** as a bottom panel with fullscreen overlay, zoom, scroll/single-page modes, keyboard navigation, and portal/admin compatibility.
 - **CsvLeadImport detail actions**: `Run Import Now` and `Reset Counter`.
 
@@ -315,7 +393,35 @@ The frontend is not built with a separate Node pipeline in this repository. Ther
   - handles session start/status/QR,
   - sends messages,
   - reads chats/messages/contacts,
+  - uses the current working history endpoints (`chat/fetchMessages` and `chat/syncHistory`),
   - fetches profile picture URLs.
+
+- `MessageDispatchService`
+  - centralizes message send/store/broadcast logic,
+  - merges API history with webhook/realtime data,
+  - prevents destructive overwrites when later events arrive with empty body,
+  - filters non-display WhatsApp system notifications.
+
+- `SessionLifecycleService`
+  - records transport/bootstrap lifecycle state,
+  - keeps `WhatsAppSession` in sync,
+  - broadcasts lifecycle changes for future module UX.
+
+- `AvatarStorageService`
+  - resolves WhatsApp avatar URLs,
+  - downloads avatars,
+  - stores avatar payloads in MinIO via `WhatsAppContactLink`,
+  - serves avatars back through CRM endpoints.
+
+- `ConversationTrackingService`
+  - opens/updates/closes `WhatsAppConversation`,
+  - tracks last message preview, direction, and message count,
+  - provides the CRM-facing conversation layer for later automation.
+
+- `WorkflowActionService`
+  - provides a stable backend action entry point for automation,
+  - currently supports `send_message`,
+  - is intended to back future Espo workflow/business-process integrations.
 
 - `WebSocketService`
   - broadcasts message events and acknowledgements to the frontend.
@@ -330,8 +436,11 @@ The repository defines custom routes for:
 - `WhatsApp/action/getChats`
 - `WhatsApp/action/getChatMessages`
 - `WhatsApp/action/getContacts`
+- `WhatsApp/action/getProfilePic`
+- `WhatsApp/action/profilePicContent`
 - `WhatsApp/action/logout`
 - `WhatsApp/action/sendMessage`
+- `WhatsApp/action/executeAction`
 - `WhatsApp/action/saveSettings`
 - `WhatsApp/action/webhook`
 - `CsvLeadImport/:id/runImport`
@@ -365,6 +474,7 @@ The checked-in runtime is DDEV-first.
 
 - there is **no separate checked-in `daemon` container** in the current DDEV setup;
 - cron and websocket both run inside the DDEV `web` runtime;
+- WhatsApp realtime uses the Espo websocket stack already present in the project (ZeroMQ/WAMP flow), not a separate ad-hoc widget channel;
 - the old README’s websocket proxy details were outdated.
 
 ### Runtime Services
@@ -374,7 +484,7 @@ The checked-in runtime is DDEV-first.
 | `web` | main EspoCRM runtime | also runs websocket daemon |
 | `db` | MariaDB | managed by DDEV |
 | `whatsapp-api` | WAHA / WhatsApp bridge | listens on port `3000` internally |
-| `minio` | object storage for PDFs | exposes `9000` and `9001` |
+| `minio` | object storage for PDFs and WhatsApp avatars | exposes `9000` and `9001` |
 | `caddy` | dev VPS hostname proxy | enabled only in `dev` env |
 
 ### URLs And Ports
@@ -569,13 +679,13 @@ This section intentionally documents the current state as seen in code, not an i
 - PDF page boundaries are enforced only by the reader UI, not by backend file slicing;
 - WebSocket access control metadata and actual broadcast topic usage are not fully aligned;
 - CSV duplicate matching uses all selected fields together, not any-of semantics.
+- the future full WhatsApp workspace UI is not finished yet even though the backend/domain foundation now exists.
 
 ### Codebase Drift
 
 - duplicated layout definitions exist in two resource trees;
-- `.bak` metadata files are still present;
 - there are two WhatsApp controller locations;
-- some widget code appears to contain unfinished or cleanup-worthy parts.
+- some widget code still carries compatibility logic from the earlier incremental integration phase.
 
 ### Operational Gaps
 
@@ -593,7 +703,9 @@ After significant changes, manually verify at least:
 4. `CourseSection` PDF upload writes `pdfMinioKey`.
 5. PDF reader still opens in admin and portal contexts.
 6. `CsvLeadImport` manual run and scheduled run both work.
-7. WhatsApp widget loads, connects, and falls back gracefully if websocket is unavailable.
+7. WhatsApp widget loads, connects, and opens a working `/wss` socket in the browser.
+8. WhatsApp chat history opens with recent device messages, not just locally stored rows.
+9. WhatsApp avatars load through CRM endpoints backed by MinIO.
 
 ## Final Notes
 
@@ -603,6 +715,7 @@ Royal Academy CRM is already a fairly opinionated vertical application on top of
 - PDF material delivery,
 - CSV lead import,
 - WhatsApp chat persistence and UI integration,
+- WhatsApp session/conversation/avatar foundation for a larger module,
 - DDEV-based local runtime.
 
 The biggest areas to treat carefully are:

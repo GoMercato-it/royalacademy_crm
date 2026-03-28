@@ -1,8 +1,7 @@
 {
     "fields": {
         "body": {
-            "type": "text",
-            "required": true
+            "type": "text"
         },
         "chatId": {
             "type": "varchar",

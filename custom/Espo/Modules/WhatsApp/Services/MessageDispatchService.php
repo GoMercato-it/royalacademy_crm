@@ -13,6 +13,7 @@ class MessageDispatchService
         private EntityManager $entityManager,
         private WhatsAppClient $whatsappClient,
         private WebSocketService $webSocketService,
+        private ConversationTrackingService $conversationTrackingService,
         private Log $log
     ) {
     }
@@ -61,9 +62,15 @@ class MessageDispatchService
                 continue;
             }
 
+            $body = $this->resolveDisplayBody($apiMessage);
+
+            if ($this->shouldSkipNonDisplayMessage($apiMessage, $body)) {
+                continue;
+            }
+
             try {
                 $this->storeMessage([
-                    'body' => $apiMessage['body'] ?? '',
+                    'body' => $body,
                     'chatId' => $chatId,
                     'fromMe' => $apiMessage['fromMe'] ?? false,
                     'timestamp' => $apiMessage['timestamp'] ?? time(),
@@ -71,6 +78,7 @@ class MessageDispatchService
                     'messageId' => $messageId,
                     'payloadMeta' => [
                         'source' => 'getChatMessages',
+                        'type' => $apiMessage['type'] ?? null,
                     ],
                 ]);
             } catch (\PDOException $e) {
@@ -95,9 +103,13 @@ class MessageDispatchService
             return null;
         }
 
-        $body = (string) ($payload->body ?? '');
+        $body = $this->resolveDisplayBody($payload);
 
         if ($body === 'status@broadcast') {
+            return null;
+        }
+
+        if ($this->shouldSkipNonDisplayMessage($payload, $body)) {
             return null;
         }
 
@@ -130,6 +142,7 @@ class MessageDispatchService
                 'source' => 'webhook',
                 'from' => $from,
                 'to' => $to,
+                'type' => is_object($payload->type ?? null) ? null : ($payload->type ?? null),
             ],
         ]);
 
@@ -154,7 +167,6 @@ class MessageDispatchService
         $status = $data['status'] ?? ($fromMe ? 'Sent' : 'Received');
         $payloadMeta = $data['payloadMeta'] ?? (object) [];
         $sessionId = $data['sessionId'] ?? $this->whatsappClient->getSessionId();
-        $conversationId = $data['conversationId'] ?? null;
         $bodyPreview = $data['bodyPreview'] ?? $this->buildBodyPreview($body);
 
         $entity = $this->findStoredMessage($messageId, $chatId, $fromMe, $body, $timestamp);
@@ -163,7 +175,31 @@ class MessageDispatchService
             $entity = $this->entityManager->getEntity('WhatsAppMessage');
         }
 
+        $isNewEntity = !$entity->hasId();
         $existingMessageId = $entity->get('messageId');
+        $existingBody = (string) ($entity->get('body') ?? '');
+        $existingBodyPreview = (string) ($entity->get('bodyPreview') ?? '');
+
+        if ($body === '' && $existingBody !== '') {
+            $body = $existingBody;
+        }
+
+        if ($bodyPreview === '' && $existingBodyPreview !== '') {
+            $bodyPreview = $existingBodyPreview;
+        }
+
+        $conversation = $this->conversationTrackingService->touchConversation(
+            $sessionId,
+            $chatId,
+            $timestamp,
+            [
+                'bodyPreview' => $bodyPreview,
+                'fromMe' => $fromMe,
+                'source' => is_array($payloadMeta) ? ($payloadMeta['source'] ?? null) : null,
+                'incrementMessageCount' => $isNewEntity ? 1 : 0,
+            ]
+        );
+        $conversationId = $data['conversationId'] ?? $conversation->getId();
 
         $entity->set([
             'body' => $body,
@@ -200,6 +236,13 @@ class MessageDispatchService
         $result = [];
 
         foreach ($collection as $message) {
+            $body = trim((string) ($message->get('body') ?? ''));
+            $bodyPreview = trim((string) ($message->get('bodyPreview') ?? ''));
+
+            if ($body === '' && $bodyPreview === '') {
+                continue;
+            }
+
             $result[] = $this->normalizeEntityForBroadcast($message);
         }
 
@@ -232,19 +275,7 @@ class MessageDispatchService
             ->limit(10)
             ->find();
 
-        foreach ($candidates as $candidate) {
-            $candidateTimestamp = $candidate->get('timestamp') ? strtotime((string) $candidate->get('timestamp')) : null;
-
-            if (!$candidateTimestamp) {
-                continue;
-            }
-
-            if (abs($candidateTimestamp - $timestamp) <= 60) {
-                return $candidate;
-            }
-        }
-
-        return null;
+        return $this->pickCandidateByTimestamp($candidates, $timestamp);
     }
 
     private function buildBodyPreview(string $body): string
@@ -267,6 +298,59 @@ class MessageDispatchService
         $parsed = strtotime((string) $timestamp);
 
         return $parsed ?: time();
+    }
+
+    private function resolveDisplayBody(array|object $message): string
+    {
+        $body = trim((string) $this->readMessageValue($message, 'body', ''));
+
+        if ($body !== '') {
+            return $body;
+        }
+
+        $type = strtolower((string) $this->readMessageValue($message, 'type', ''));
+
+        return match ($type) {
+            'image' => '[Image]',
+            'video' => '[Video]',
+            'audio', 'ptt', 'voice' => '[Audio]',
+            'document' => '[Document]',
+            'sticker' => '[Sticker]',
+            'location' => '[Location]',
+            'vcard', 'multi_vcard' => '[Contact]',
+            'poll_creation', 'poll_update', 'poll_result' => '[Poll]',
+            default => '',
+        };
+    }
+
+    private function shouldSkipNonDisplayMessage(array|object $message, string $body): bool
+    {
+        if ($body !== '') {
+            return false;
+        }
+
+        $type = strtolower((string) $this->readMessageValue($message, 'type', ''));
+
+        return in_array($type, [
+            'e2e_notification',
+            'notification_template',
+            'protocol',
+            'gp2',
+            'ciphertext',
+        ], true);
+    }
+
+    private function readMessageValue(array|object $message, string $key, mixed $default = null): mixed
+    {
+        if (is_array($message)) {
+            return $message[$key] ?? $default;
+        }
+
+        if (is_object($message)) {
+            return $message->{$key} ?? $default;
+        }
+
+        return $default;
     }
 
     private function isTemporaryMessageId(?string $messageId): bool
@@ -319,5 +403,22 @@ class MessageDispatchService
         } catch (\Throwable $e) {
             $this->log->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
         }
+    }
+
+    private function pickCandidateByTimestamp(iterable $candidates, int $timestamp): ?Entity
+    {
+        foreach ($candidates as $candidate) {
+            $candidateTimestamp = $candidate->get('timestamp') ? strtotime((string) $candidate->get('timestamp')) : null;
+
+            if (!$candidateTimestamp) {
+                continue;
+            }
+
+            if (abs($candidateTimestamp - $timestamp) <= 60) {
+                return $candidate;
+            }
+        }
+
+        return null;
     }
 }

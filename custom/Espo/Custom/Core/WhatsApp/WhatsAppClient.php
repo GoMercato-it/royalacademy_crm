@@ -58,16 +58,26 @@ class WhatsAppClient
 
     public function getChatMessages(string $chatId, int $limit = 100): array
     {
-        $response = $this->makeRequest('GET', "/client/getChatMessages/{$this->sessionId}?chatId={$chatId}&limit={$limit}");
+        $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", [
+            'chatId' => $chatId,
+            'searchOptions' => [
+                'limit' => $limit,
+            ],
+        ]);
         $messages = $response['messages'] ?? $response['data'] ?? [];
 
-        // If empty, try to force sync via downloadAndReadMessages
         if (empty($messages)) {
-            $response = $this->makeRequest('POST', "/client/downloadAndReadMessages/{$this->sessionId}", [
+            $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", [
                 'chatId' => $chatId,
-                'limit' => $limit
             ]);
-            $messages = $response['messages'] ?? [];
+
+            $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", [
+                'chatId' => $chatId,
+                'searchOptions' => [
+                    'limit' => $limit,
+                ],
+            ]);
+            $messages = $response['messages'] ?? $response['data'] ?? [];
         }
 
         return $messages;
@@ -154,8 +164,8 @@ class WhatsAppClient
         }
 
         if ($httpCode !== 200) {
-            // Suppress 404 for wwebjs-api endpoints that might be deprecated/missing
-            if ($httpCode === 404 && (strpos($url, 'getChatMessages') !== false || strpos($url, 'downloadAndReadMessages') !== false)) {
+            // Suppress 404 for optional WA endpoints that may not exist across builds
+            if ($httpCode === 404 && (strpos($url, 'fetchMessages') !== false || strpos($url, 'syncHistory') !== false)) {
                 return ['success' => false, 'code' => $httpCode];
             }
             $this->log->error('WhatsAppClient API error fetching ' . $url, ['code' => $httpCode, 'response' => $response]);
