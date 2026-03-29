@@ -1,3 +1,6 @@
 crm.gomercato.it {
+    @internalWebhook path /api/v1/WhatsApp/action/webhook
+    respond @internalWebhook "Forbidden" 403
+
     reverse_proxy ddev-royalacademy-crm-web:80
 }

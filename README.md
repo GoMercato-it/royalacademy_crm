@@ -64,6 +64,127 @@ The repository contains a meaningful amount of custom code and configuration, no
 - there are two WhatsApp controllers in different namespaces;
 - the old README described infrastructure that does not match the current checked-in DDEV setup.
 
+## WhatsApp Production Deploy Prerequisites
+
+WhatsApp is not "just a widget" in this project anymore. A real deployment works only when all four parts are aligned:
+
+- the CRM application layer,
+- the WhatsApp bridge container,
+- the Espo websocket stack,
+- avatar/object storage.
+
+### Required Code And Components
+
+- backend custom code:
+  - `custom/Espo/Custom/Controllers/WhatsApp.php`
+  - `custom/Espo/Custom/Core/WhatsApp/WhatsAppClient.php`
+  - `custom/Espo/Modules/WhatsApp/Services/*`
+  - metadata for `WhatsAppMessage`, `WhatsAppSession`, `WhatsAppConversation`, `WhatsAppContactLink`
+- frontend widget code:
+  - `client/custom/src/whatsapp-widget-init.js`
+  - `client/custom/css/whatsapp-widget.css`
+- WhatsApp bridge service compatible with WAHA / `wwebjs`
+- running Espo websocket daemon (`php websocket.php`)
+- reverse proxy rule for `/wss`
+- MinIO/S3-compatible object storage for avatars
+- persistent session/cache volumes for the WhatsApp bridge
+
+### Required Runtime Services
+
+- `web`
+- `db`
+- `whatsapp-api`
+- `minio`
+- Espo websocket daemon
+- ZeroMQ available for websocket submission
+
+### Required Espo Config
+
+- `whatsappEnabled = true`
+- `whatsappApiUrl = http://whatsapp-api:3000` or the real bridge URL
+- `whatsappApiKey = <shared secret with bridge>`
+- `useWebSocket = true`
+- `webSocketMessager = ZeroMQ`
+
+Useful optional keys:
+
+- `whatsappConversationTimeoutSeconds`
+- `whatsappAutoMessageEnabled`
+- `whatsappLeadTemplate`
+
+### Required Bridge Config
+
+- `API_KEY = <same value as whatsappApiKey>`
+- `BASE_WEBHOOK_URL = http://web/api/v1/WhatsApp/action/webhook`
+- persistent mounts for:
+  - `/usr/src/app/sessions`
+  - `/usr/src/app/.wwebjs_cache`
+
+If using the project-local bridge image strategy, also keep:
+
+- `.ddev/whatsapp-api-patches/patch-profile-pic.js`
+
+### Required MinIO Config
+
+- `MINIO_ENDPOINT`
+- `MINIO_REGION`
+- `MINIO_ACCESS_KEY`
+- `MINIO_SECRET_KEY`
+- `MINIO_BUCKET`
+- `MINIO_BUCKET_WHATSAPP` optional
+
+Current behavior:
+
+- if `MINIO_BUCKET_WHATSAPP` is absent, avatar storage falls back to `MINIO_BUCKET`;
+- `WhatsAppContactLink` stores avatar object keys using stable `waId`-based keys.
+
+### Required `/wss` Reverse Proxy
+
+The browser must be able to open:
+
+- `wss://<crm-host>/wss?authToken=...&userId=...`
+
+Equivalent nginx rule:
+
+```nginx
+location /wss {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "Upgrade";
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 3600s;
+    proxy_send_timeout 3600s;
+}
+```
+
+### Required Public Webhook Policy
+
+The WhatsApp webhook is intentionally **internal-only** in the current deployment model.
+
+- the bridge posts to `http://web/api/v1/WhatsApp/action/webhook`
+- the public CRM domain must **not** expose `POST /api/v1/WhatsApp/action/webhook`
+- the public front proxy must deny that path before traffic reaches the app
+
+Current implementation:
+
+- Caddy blocks `/api/v1/WhatsApp/action/webhook` with `403`
+- the internal Docker network path remains allowed
+
+### Post-Deploy Validation Checklist
+
+1. `whatsapp-api` responds and accepts the configured API key.
+2. `POST /api/v1/WhatsApp/action/webhook` is reachable from the bridge through `http://web/...`.
+3. `php websocket.php` is running.
+4. the browser opens a real websocket connection on `/wss`.
+5. QR generation works and the session survives container restarts.
+6. avatars are served through CRM endpoints backed by MinIO.
+7. a new incoming or outgoing message moves the chat to the top of the list without manual refresh.
+8. `POST https://<public-domain>/api/v1/WhatsApp/action/webhook` returns `403`.
+
 ## Core Business Model
 
 ### `Course`
@@ -312,31 +433,141 @@ Default mapping already handles many common column names such as:
 
 ### 6. WhatsApp Messaging
 
-The WhatsApp integration is split into two parts:
+The WhatsApp subsystem now has to be read as a layered architecture, not as a one-off widget integration.
 
-- an admin setup screen for API settings;
-- a globally injected floating chat widget in the frontend;
-- a shared backend foundation for a future full WhatsApp CRM module and workflow actions.
+- **UI**: floating widget today, future full WhatsApp workspace later.
+- **Application boundary**: custom/module controllers.
+- **Domain layer**: message/session/conversation/avatar/workflow services.
+- **Infrastructure**: bridge adapter, websocket broadcaster, MinIO, ORM.
 
-The backend flow is:
+#### Layered Architecture
 
-1. the CRM talks to a WAHA / wwebjs-compatible API service;
-2. inbound webhook data is accepted by `POST /WhatsApp/action/webhook`;
-3. chat history is fetched from the working `chat/fetchMessages` endpoint, with `syncHistory` fallback when needed;
-4. normalized displayable messages are stored in `WhatsAppMessage`;
-5. conversation/session state is tracked in `WhatsAppConversation` and `WhatsAppSession`;
-6. avatars are stored through `WhatsAppContactLink` and served from MinIO-backed storage;
-7. outbound and inbound events are broadcast through Espo WebSocket submission;
-8. the widget renders live updates through the Espo WebSocket channel; initial list/history bootstrap still uses HTTP endpoints.
+```mermaid
+flowchart TB
+    UI["UI layer<br/>Floating widget<br/>Future WhatsApp workspace"]
+    APP["Application layer<br/>Custom Controller<br/>Module Controller"]
+    DOMAIN["Domain services<br/>MessageDispatchService<br/>SessionLifecycleService<br/>AvatarStorageService<br/>ConversationTrackingService<br/>WorkflowActionService"]
+    INFRA["Infrastructure layer<br/>WhatsAppClient<br/>WebSocketService<br/>MinioService<br/>ORM / EntityManager"]
+    EXT["External systems<br/>whatsapp-api bridge<br/>Espo websocket daemon<br/>ZeroMQ<br/>MinIO"]
 
-Additional behavior:
+    UI --> APP --> DOMAIN --> INFRA --> EXT
+```
 
-- chat history is merged from API and DB, with local persistence used as the stable history layer;
+#### Session Lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> qr_ready
+    qr_ready --> authenticated: QR scanned
+    authenticated --> bootstrap_started
+    bootstrap_started --> contacts_syncing
+    contacts_syncing --> history_syncing
+    history_syncing --> avatars_syncing
+    avatars_syncing --> ready
+    ready --> degraded: partial failure
+    degraded --> ready: recovery
+    ready --> disconnected
+    disconnected --> qr_ready: new login
+```
+
+#### Inbound Message Request Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant USER as WhatsApp user
+    participant BRIDGE as whatsapp-api bridge
+    participant CTRL as WhatsApp Controller/webhook
+    participant MSG as MessageDispatchService
+    participant DB as WhatsAppMessage + Conversation
+    participant WS as WebSocketService
+    participant UI as Widget
+
+    USER->>BRIDGE: send message
+    BRIDGE->>CTRL: POST /WhatsApp/action/webhook
+    CTRL->>MSG: normalize + persist
+    MSG->>DB: save/update message
+    MSG->>WS: broadcast topic WhatsApp
+    WS-->>UI: realtime event via /wss
+```
+
+#### Outbound Message Request Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant UI as Widget
+    participant CTRL as WhatsApp Controller/sendMessage
+    participant BRIDGE as whatsapp-api bridge
+    participant MSG as MessageDispatchService
+    participant DB as WhatsAppMessage + Conversation
+    participant WS as WebSocketService
+
+    UI->>CTRL: POST /WhatsApp/action/sendMessage
+    CTRL->>BRIDGE: send message
+    BRIDGE-->>CTRL: ack + messageId
+    CTRL->>MSG: persist outbound message
+    MSG->>DB: save/update row
+    MSG->>WS: broadcast topic WhatsApp
+    WS-->>UI: realtime event
+```
+
+#### Chat History Load Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant UI as Widget
+    participant CTRL as WhatsApp Controller/getChatMessages
+    participant CLIENT as WhatsAppClient
+    participant BRIDGE as whatsapp-api bridge
+    participant MSG as MessageDispatchService
+    participant DB as WhatsAppMessage
+
+    UI->>CTRL: open chat(chatId)
+    CTRL->>CLIENT: getChatMessages(chatId)
+    CLIENT->>BRIDGE: POST /chat/fetchMessages/:sessionId
+    BRIDGE-->>CLIENT: remote history
+    CLIENT-->>CTRL: normalized messages
+    CTRL->>MSG: ingestApiMessages()
+    MSG->>DB: dedupe + store
+    CTRL-->>UI: merged history (DB + remote)
+```
+
+#### Avatar Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant UI as Widget
+    participant CTRL as WhatsApp Controller/profilePicContent
+    participant AV as AvatarStorageService
+    participant CLIENT as WhatsAppClient
+    participant BRIDGE as whatsapp-api bridge
+    participant MINIO as MinIO
+
+    UI->>CTRL: GET profilePicContent?id=...
+    CTRL->>AV: resolve avatar
+    AV->>MINIO: check cached object
+    alt avatar cached
+        MINIO-->>AV: object stream
+    else avatar missing
+        AV->>CLIENT: request pic url / payload
+        CLIENT->>BRIDGE: fetch avatar info
+        BRIDGE-->>CLIENT: avatar source
+        AV->>MINIO: store object by waId
+    end
+    AV-->>CTRL: avatar stream
+    CTRL-->>UI: image response
+```
+
+#### Operational Rules
+
+- live updates for the widget are **websocket-only**;
+- `/wss` is the required transport for realtime;
+- HTTP remains for bootstrap, status checks, and explicit history fetches;
+- chat history is merged from remote API and local DB, with DB acting as the stable persistence layer;
 - duplicate messages are avoided using `messageId`;
-- empty technical WhatsApp notifications are filtered so they do not become fake user chats;
-- contacts are deduplicated across multiple WhatsApp identity forms such as `@c.us` and `@lid`;
-- profile pictures are cached through the backend and stored in MinIO, not in a frontend-local avatar folder;
-- a workflow-ready action layer exists so future CRM automation can call WhatsApp actions without binding directly to widget code.
+- empty technical WhatsApp notifications are filtered so they do not become fake chats;
+- contacts are deduplicated across identity variants such as `@c.us` and `@lid`;
+- profile pictures are stored through the backend in MinIO, not in a frontend-local avatar folder;
+- workflow-oriented actions exist so future CRM automation can use WhatsApp without binding directly to widget code.
 
 ## Frontend Customization
 
@@ -669,7 +900,7 @@ This section intentionally documents the current state as seen in code, not an i
 
 ### Security / Exposure
 
-- `POST /WhatsApp/action/webhook` is marked `noAuth: true` and the controller does not validate a signature or shared secret.
+- `POST /WhatsApp/action/webhook` relies on network/proxy isolation rather than app-level signature validation in the current deployment model; the public proxy is expected to deny this path and the bridge must call the internal Docker address instead.
 - checked-in environment and compose templates currently contain environment-specific secrets and credentials; these should be reviewed before broader distribution or non-local deployment.
 - the default local WhatsApp API key is a development placeholder and must not be reused outside local/dev use.
 
