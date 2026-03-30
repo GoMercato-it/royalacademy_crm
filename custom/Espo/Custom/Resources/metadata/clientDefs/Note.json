@@ -1,0 +1,5 @@
+{
+    "itemViews": {
+        "Update": "custom:views/stream/notes/update"
+    }
+}

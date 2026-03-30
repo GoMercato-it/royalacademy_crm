@@ -1,0 +1,39 @@
+{
+    "fields": {
+        "workflowDefinitionId": {
+            "type": "varchar",
+            "required": true,
+            "len": 50,
+            "index": true
+        },
+        "workflowExecutionId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
+        "status": {
+            "type": "enum",
+            "options": ["queued", "running", "completed", "failed", "cancelled"],
+            "default": "queued"
+        },
+        "runAt": {
+            "type": "datetime",
+            "required": true,
+            "index": true
+        },
+        "attemptCount": {
+            "type": "int",
+            "default": 0
+        },
+        "payload": {
+            "type": "jsonObject"
+        },
+        "lastError": {
+            "type": "text"
+        }
+    },
+    "collection": {
+        "sortBy": "runAt",
+        "asc": true
+    }
+}

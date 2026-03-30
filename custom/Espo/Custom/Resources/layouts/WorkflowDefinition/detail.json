@@ -1,0 +1,62 @@
+[
+    {
+        "label": "Overview",
+        "rows": [
+            [
+                {
+                    "name": "name"
+                },
+                {
+                    "name": "status"
+                }
+            ],
+            [
+                {
+                    "name": "triggerType"
+                },
+                {
+                    "name": "entityType",
+                    "view": "views/fields/entity-type"
+                }
+            ],
+            [
+                {
+                    "name": "executionMode"
+                },
+                {
+                    "name": "isEnabled"
+                }
+            ],
+            [
+                {
+                    "name": "conditions",
+                    "fullWidth": true,
+                    "view": "custom:views/workflows/fields/conditions"
+                }
+            ],
+            [
+                {
+                    "name": "actions",
+                    "fullWidth": true,
+                    "view": "custom:views/workflows/fields/actions"
+                }
+            ],
+            [
+                {
+                    "name": "createdAt"
+                },
+                {
+                    "name": "modifiedAt"
+                }
+            ],
+            [
+                {
+                    "name": "createdBy"
+                },
+                {
+                    "name": "modifiedBy"
+                }
+            ]
+        ]
+    }
+]

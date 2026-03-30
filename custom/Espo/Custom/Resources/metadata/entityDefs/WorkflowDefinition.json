@@ -1,0 +1,90 @@
+{
+    "fields": {
+        "name": {
+            "type": "varchar",
+            "required": true,
+            "len": 255
+        },
+        "status": {
+            "type": "enum",
+            "options": ["draft", "active", "paused", "archived"],
+            "default": "draft"
+        },
+        "triggerType": {
+            "type": "enum",
+            "required": true,
+            "options": ["manual", "record_created", "record_updated", "scheduled", "signal"],
+            "default": "manual"
+        },
+        "entityType": {
+            "type": "varchar",
+            "len": 100,
+            "index": true,
+            "view": "views/fields/entity-type"
+        },
+        "executionMode": {
+            "type": "enum",
+            "options": ["sync", "queued"],
+            "default": "sync"
+        },
+        "isEnabled": {
+            "type": "bool",
+            "default": true
+        },
+        "conditions": {
+            "type": "jsonObject",
+            "view": "custom:views/workflows/fields/conditions"
+        },
+        "actions": {
+            "type": "jsonArray",
+            "view": "custom:views/workflows/fields/actions",
+            "options": [
+                "record.create_record",
+                "record.update_record",
+                "record.assign_owner",
+                "email.send_email",
+                "email.queue_email",
+                "email.send_template",
+                "whatsapp.send_message",
+                "whatsapp.schedule_follow_up",
+                "whatsapp.link_chat_to_entity",
+                "whatsapp.assign_conversation_owner",
+                "whatsapp.close_conversation"
+            ],
+            "displayAsList": true
+        },
+        "metadata": {
+            "type": "jsonObject"
+        },
+        "createdAt": {
+            "type": "datetime",
+            "readOnly": true
+        },
+        "modifiedAt": {
+            "type": "datetime",
+            "readOnly": true
+        },
+        "createdBy": {
+            "type": "link",
+            "readOnly": true
+        },
+        "modifiedBy": {
+            "type": "link",
+            "readOnly": true
+        }
+    },
+    "links": {
+        "createdBy": {
+            "type": "belongsTo",
+            "entity": "User"
+        },
+        "modifiedBy": {
+            "type": "belongsTo",
+            "entity": "User"
+        }
+    },
+    "collection": {
+        "sortBy": "createdAt",
+        "asc": false
+    }
+}

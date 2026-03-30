@@ -1,0 +1,68 @@
+{
+    "fields": {
+        "name": "Nome",
+        "status": "Stato",
+        "triggerType": "Tipo Trigger",
+        "entityType": "Tipo Entità",
+        "targetEntityType": "Entità Target",
+        "executionMode": "Modalità Esecuzione",
+        "isEnabled": "Abilitato",
+        "conditions": "Condizioni",
+        "actions": "Azioni",
+        "metadata": "Metadati",
+        "recordId": "ID Record",
+        "assignedUser": "Utente assegnato",
+        "waId": "WhatsApp ID",
+        "messageBody": "Testo messaggio",
+        "toEmail": "Email destinatario",
+        "emailSubject": "Oggetto",
+        "emailBody": "Corpo email",
+        "fieldAssignments": "Campi",
+        "field": "Campo",
+        "value": "Valore"
+    },
+    "labels": {
+        "Target": "Target",
+        "Fields": "Campi",
+        "Assigned User": "Utente assegnato",
+        "Target Entity": "Entità Target",
+        "Field Value": "Valore campo"
+    },
+    "options": {
+        "status": {
+            "draft": "Bozza",
+            "active": "Attivo",
+            "paused": "In pausa",
+            "archived": "Archiviato"
+        },
+        "triggerType": {
+            "manual": "Manuale",
+            "record_created": "Record creato",
+            "record_updated": "Record aggiornato",
+            "scheduled": "Pianificato",
+            "signal": "Segnale"
+        },
+        "executionMode": {
+            "sync": "Sincrono",
+            "queued": "In coda"
+        },
+        "actions": {
+            "record.create_record": "Record: Crea record",
+            "record.update_record": "Record: Aggiorna record",
+            "record.assign_owner": "Record: Assegna proprietario",
+            "email.send_email": "Email: Invia email",
+            "email.queue_email": "Email: Accoda email",
+            "email.send_template": "Email: Invia template",
+            "whatsapp.send_message": "WhatsApp: Invia messaggio",
+            "whatsapp.schedule_follow_up": "WhatsApp: Pianifica follow-up",
+            "whatsapp.link_chat_to_entity": "WhatsApp: Collega chat a entità",
+            "whatsapp.assign_conversation_owner": "WhatsApp: Assegna responsabile conversazione",
+            "whatsapp.close_conversation": "WhatsApp: Chiudi conversazione"
+        }
+    },
+    "messages": {
+        "selectEntityTypeFirst": "Seleziona prima il tipo di entità.",
+        "selectTargetEntityFirst": "Seleziona prima l'entità target.",
+        "configurationAvailableInEditor": "Configurazione disponibile nell'editor"
+    }
+}

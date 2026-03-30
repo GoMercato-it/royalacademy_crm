@@ -1,0 +1,42 @@
+{
+    "fields": {
+        "workflowExecutionId": {
+            "type": "varchar",
+            "required": true,
+            "len": 50,
+            "index": true
+        },
+        "stepIndex": {
+            "type": "int",
+            "default": 0
+        },
+        "stepType": {
+            "type": "enum",
+            "options": ["system", "condition", "action"],
+            "default": "action"
+        },
+        "provider": {
+            "type": "varchar",
+            "len": 100
+        },
+        "actionName": {
+            "type": "varchar",
+            "len": 100
+        },
+        "status": {
+            "type": "enum",
+            "options": ["info", "success", "failed", "skipped"],
+            "default": "info"
+        },
+        "message": {
+            "type": "text"
+        },
+        "payload": {
+            "type": "jsonObject"
+        }
+    },
+    "collection": {
+        "sortBy": "createdAt",
+        "asc": false
+    }
+}

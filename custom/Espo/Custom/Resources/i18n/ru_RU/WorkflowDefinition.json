@@ -1,0 +1,68 @@
+{
+    "fields": {
+        "name": "Название",
+        "status": "Статус",
+        "triggerType": "Тип триггера",
+        "entityType": "Тип сущности",
+        "targetEntityType": "Целевая сущность",
+        "executionMode": "Режим выполнения",
+        "isEnabled": "Включено",
+        "conditions": "Условия",
+        "actions": "Действия",
+        "metadata": "Метаданные",
+        "recordId": "ID записи",
+        "assignedUser": "Назначенный пользователь",
+        "waId": "WhatsApp ID",
+        "messageBody": "Текст сообщения",
+        "toEmail": "Email получателя",
+        "emailSubject": "Тема",
+        "emailBody": "Тело письма",
+        "fieldAssignments": "Поля",
+        "field": "Поле",
+        "value": "Значение"
+    },
+    "labels": {
+        "Target": "Цель",
+        "Fields": "Поля",
+        "Assigned User": "Назначенный пользователь",
+        "Target Entity": "Целевая сущность",
+        "Field Value": "Значение поля"
+    },
+    "options": {
+        "status": {
+            "draft": "Черновик",
+            "active": "Активен",
+            "paused": "На паузе",
+            "archived": "Архив"
+        },
+        "triggerType": {
+            "manual": "Вручную",
+            "record_created": "Создание записи",
+            "record_updated": "Изменение записи",
+            "scheduled": "По расписанию",
+            "signal": "Сигнал"
+        },
+        "executionMode": {
+            "sync": "Синхронно",
+            "queued": "В очереди"
+        },
+        "actions": {
+            "record.create_record": "Запись: Создать запись",
+            "record.update_record": "Запись: Обновить запись",
+            "record.assign_owner": "Запись: Назначить владельца",
+            "email.send_email": "Email: Отправить письмо",
+            "email.queue_email": "Email: Поставить письмо в очередь",
+            "email.send_template": "Email: Отправить шаблон",
+            "whatsapp.send_message": "WhatsApp: Отправить сообщение",
+            "whatsapp.schedule_follow_up": "WhatsApp: Запланировать follow-up",
+            "whatsapp.link_chat_to_entity": "WhatsApp: Связать чат с сущностью",
+            "whatsapp.assign_conversation_owner": "WhatsApp: Назначить ответственного за диалог",
+            "whatsapp.close_conversation": "WhatsApp: Закрыть диалог"
+        }
+    },
+    "messages": {
+        "selectEntityTypeFirst": "Сначала выберите тип сущности.",
+        "selectTargetEntityFirst": "Сначала выберите целевую сущность.",
+        "configurationAvailableInEditor": "Конфигурация доступна в редакторе"
+    }
+}

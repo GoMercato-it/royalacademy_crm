@@ -1,0 +1,51 @@
+{
+    "fields": {
+        "workflowDefinitionId": {
+            "type": "varchar",
+            "required": true,
+            "len": 50,
+            "index": true
+        },
+        "status": {
+            "type": "enum",
+            "options": ["pending", "running", "completed", "failed", "cancelled"],
+            "default": "pending"
+        },
+        "triggerType": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
+        "relatedEntityType": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
+        "relatedEntityId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
+        "contextData": {
+            "type": "jsonObject"
+        },
+        "resultData": {
+            "type": "jsonObject"
+        },
+        "errorMessage": {
+            "type": "text"
+        },
+        "startedAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "finishedAt": {
+            "type": "datetime",
+            "index": true
+        }
+    },
+    "collection": {
+        "sortBy": "startedAt",
+        "asc": false
+    }
+}

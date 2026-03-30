@@ -20,5 +20,11 @@
         "type": "Base",
         "custom": true,
         "tab": true
+    },
+    "WorkflowDefinition": {
+        "entity": true,
+        "type": "Base",
+        "custom": true,
+        "tab": false
     }
 }

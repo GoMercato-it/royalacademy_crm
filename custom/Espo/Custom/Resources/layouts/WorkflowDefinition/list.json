@@ -1,0 +1,21 @@
+[
+    {
+        "name": "name",
+        "link": true
+    },
+    {
+        "name": "status"
+    },
+    {
+        "name": "triggerType"
+    },
+    {
+        "name": "entityType"
+    },
+    {
+        "name": "executionMode"
+    },
+    {
+        "name": "isEnabled"
+    }
+]

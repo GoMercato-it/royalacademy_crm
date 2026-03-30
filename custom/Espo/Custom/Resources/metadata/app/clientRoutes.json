@@ -1,0 +1,10 @@
+{
+    "Admin/workflows": {
+        "params": {
+            "controller": "WorkflowDefinition",
+            "action": "list",
+            "fromAdmin": true
+        },
+        "order": 10
+    }
+}

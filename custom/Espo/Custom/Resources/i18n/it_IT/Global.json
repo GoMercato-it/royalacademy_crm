@@ -1,14 +1,19 @@
 {
+    "messages": {
+        "workflowLabel": "Workflow"
+    },
     "scopeNames": {
         "Course": "Corso",
         "CourseSection": "Sezione Corso",
         "CourseAccess": "Accesso Corso",
-        "Student": "Studente"
+        "Student": "Studente",
+        "WorkflowDefinition": "Workflow"
     },
     "scopeNamesPlural": {
         "Course": "Corsi",
         "CourseSection": "Sezioni Corso",
         "CourseAccess": "Accessi Corso",
-        "Student": "Studenti"
+        "Student": "Studenti",
+        "WorkflowDefinition": "Workflows"
     }
 }
