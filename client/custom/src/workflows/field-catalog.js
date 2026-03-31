@@ -101,6 +101,18 @@ define('custom:workflows/field-catalog', [], function () {
                 defs.translatedOptions = descriptor.translatedValueOptions;
             }
 
+            if (descriptor.view) {
+                defs.view = descriptor.view;
+            }
+
+            if (descriptor.params) {
+                defs.params = descriptor.params;
+            }
+
+            if (descriptor.entityType) {
+                defs.entityType = descriptor.entityType;
+            }
+
             return defs;
         }
 
@@ -326,6 +338,9 @@ define('custom:workflows/field-catalog', [], function () {
                 valueType: valueMeta.type,
                 valueOptions: valueMeta.options || [],
                 translatedValueOptions: valueMeta.translatedOptions || {},
+                view: valueMeta.view || null,
+                params: valueMeta.params || null,
+                entityType: valueMeta.entityType || null,
                 label: this.translateAttribute(entityType, attribute, true),
             };
         }
@@ -408,6 +423,28 @@ define('custom:workflows/field-catalog', [], function () {
                 };
             }
 
+            if (type === 'linkParent' && attribute === `${field}Type`) {
+                const entityList = fieldDefs.entityList || [];
+
+                return {
+                    type: 'enum',
+                    options: entityList,
+                    translatedOptions: this.getTranslatedScopeMap(entityList),
+                };
+            }
+
+            if (type === 'link' && attribute === `${field}Id`) {
+                const linkDefs = this.getMetadata().get(['entityDefs', entityType, 'links', field]) || {};
+
+                if ((linkDefs.entity || '') === 'User') {
+                    return {
+                        type: 'link',
+                        view: 'views/fields/user',
+                        entityType: 'User',
+                    };
+                }
+            }
+
             if (type === 'multiEnum' || type === 'checklist') {
                 return null;
             }
@@ -427,6 +464,16 @@ define('custom:workflows/field-catalog', [], function () {
                 translated[option] = entityType ?
                     this.getLanguage().translateOption(option, field, entityType) || option :
                     option;
+            });
+
+            return translated;
+        }
+
+        getTranslatedScopeMap(scopeList) {
+            const translated = {};
+
+            scopeList.forEach(scope => {
+                translated[scope] = this.translate(scope, 'scopeNames') || scope;
             });
 
             return translated;

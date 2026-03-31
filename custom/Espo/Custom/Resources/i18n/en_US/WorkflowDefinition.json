@@ -60,6 +60,8 @@
         },
         "actions": {
             "record.create_record": "Record: Create Record",
+            "record.create_task": "Record: Create Task",
+            "record.create_meeting": "Record: Create Meeting",
             "record.update_record": "Record: Update Record",
             "record.assign_owner": "Record: Assign Owner",
             "email.send_email": "Email: Send Email",

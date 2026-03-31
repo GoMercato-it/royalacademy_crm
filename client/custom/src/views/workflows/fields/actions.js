@@ -226,6 +226,14 @@ define('custom:views/workflows/fields/actions', [
                     return `${this.translate('Target', 'labels', 'WorkflowDefinition')}: ${this.translate(entityType, 'scopeNames')} | ${this.translate('Fields', 'labels', 'WorkflowDefinition')}: ${fieldCount}`;
                 }
 
+                case 'record.create_task':
+                case 'record.create_meeting': {
+                    const entityType = this.getFixedTargetEntityType(key);
+                    const fieldCount = Array.isArray(payload.attributes) ? payload.attributes.length : 0;
+
+                    return `${this.translate('Target', 'labels', 'WorkflowDefinition')}: ${this.translate(entityType, 'scopeNames')} | ${this.translate('Fields', 'labels', 'WorkflowDefinition')}: ${fieldCount}`;
+                }
+
                 case 'record.update_record': {
                     const entityType = payload.entityType || this.translate('None');
                     const fieldCount = Array.isArray(payload.attributes) ? payload.attributes.length : 0;
@@ -326,6 +334,8 @@ define('custom:views/workflows/fields/actions', [
         getDefaultActionOptionList() {
             return [
                 'record.create_record',
+                'record.create_task',
+                'record.create_meeting',
                 'record.update_record',
                 'record.assign_owner',
                 'email.send_email',
@@ -344,6 +354,18 @@ define('custom:views/workflows/fields/actions', [
                 case 'record.create_record':
                     return {
                         entityType: '',
+                        attributes: [],
+                    };
+
+                case 'record.create_task':
+                    return {
+                        entityType: 'Task',
+                        attributes: [],
+                    };
+
+                case 'record.create_meeting':
+                    return {
+                        entityType: 'Meeting',
                         attributes: [],
                     };
 
@@ -390,6 +412,8 @@ define('custom:views/workflows/fields/actions', [
 
             switch (key) {
                 case 'record.create_record':
+                case 'record.create_task':
+                case 'record.create_meeting':
                     return !!payload.entityType && Array.isArray(payload.attributes) && payload.attributes.length > 0;
 
                 case 'record.update_record':
@@ -436,6 +460,18 @@ define('custom:views/workflows/fields/actions', [
             }
 
             return value.value !== '' && value.value !== null && value.value !== undefined;
+        }
+
+        getFixedTargetEntityType(key) {
+            if (key === 'record.create_task') {
+                return 'Task';
+            }
+
+            if (key === 'record.create_meeting') {
+                return 'Meeting';
+            }
+
+            return '';
         }
     };
 });

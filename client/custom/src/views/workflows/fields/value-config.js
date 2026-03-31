@@ -29,6 +29,7 @@ define('custom:views/workflows/fields/value-config', [
             this.valueType = this.options.valueType || this.params.valueType || 'varchar';
             this.valueOptions = this.options.valueOptions || this.params.valueOptions || [];
             this.translatedValueOptions = this.options.translatedValueOptions || this.params.translatedValueOptions || {};
+            this.constantFieldDefs = this.options.fieldDefs || this.params.fieldDefs || null;
             this.headerText = this.options.headerText || this.params.headerText || this.translate(this.name, 'fields', 'WorkflowDefinition');
             this.fieldCatalog = new FieldCatalog(this);
 
@@ -59,6 +60,7 @@ define('custom:views/workflows/fields/value-config', [
                 valueType: this.valueType,
                 valueOptions: this.valueOptions,
                 translatedValueOptions: this.translatedValueOptions,
+                fieldDefs: this.constantFieldDefs,
                 headerText: this.headerText,
             }, view => {
                 view.render();

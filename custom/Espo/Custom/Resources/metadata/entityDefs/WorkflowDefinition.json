@@ -53,6 +53,8 @@
             "view": "custom:views/workflows/fields/actions",
             "options": [
                 "record.create_record",
+                "record.create_task",
+                "record.create_meeting",
                 "record.update_record",
                 "record.assign_owner",
                 "email.send_email",

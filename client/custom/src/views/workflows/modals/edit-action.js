@@ -71,6 +71,18 @@ define('custom:views/workflows/modals/edit-action', [
                         fieldAssignments: this.normalizeFieldAssignments(payload.attributes || []),
                     };
 
+                case 'record.create_task':
+                    return {
+                        targetEntityType: 'Task',
+                        fieldAssignments: this.normalizeFieldAssignments(payload.attributes || []),
+                    };
+
+                case 'record.create_meeting':
+                    return {
+                        targetEntityType: 'Meeting',
+                        fieldAssignments: this.normalizeFieldAssignments(payload.attributes || []),
+                    };
+
                 case 'record.update_record':
                     return {
                         targetEntityType: payload.entityType || '',
@@ -171,6 +183,24 @@ define('custom:views/workflows/modals/edit-action', [
                         }
                     ];
 
+                case 'record.create_task':
+                case 'record.create_meeting':
+                    return [
+                        {
+                            rows: [
+                                [
+                                    {
+                                        name: 'fieldAssignments',
+                                        labelText: this.translate('Fields', 'fields', 'WorkflowDefinition'),
+                                        options: {
+                                            sourceEntityType: this.workflowEntityType
+                                        }
+                                    }
+                                ]
+                            ]
+                        }
+                    ];
+
                 case 'record.update_record':
                     return [
                         {
@@ -228,7 +258,11 @@ define('custom:views/workflows/modals/edit-action', [
                                         labelText: this.translate('Assigned User', 'fields', 'WorkflowDefinition'),
                                         options: {
                                             sourceEntityType: this.workflowEntityType,
-                                            valueType: 'varchar',
+                                            fieldDefs: {
+                                                type: 'link',
+                                                view: 'views/fields/user',
+                                                entityType: 'User'
+                                            },
                                             headerText: this.translate('Assigned User', 'fields', 'WorkflowDefinition')
                                         }
                                     }
@@ -322,6 +356,18 @@ define('custom:views/workflows/modals/edit-action', [
                 case 'record.create_record':
                     return {
                         entityType: this.model.get('targetEntityType') || '',
+                        attributes: this.model.get('fieldAssignments') || [],
+                    };
+
+                case 'record.create_task':
+                    return {
+                        entityType: 'Task',
+                        attributes: this.model.get('fieldAssignments') || [],
+                    };
+
+                case 'record.create_meeting':
+                    return {
+                        entityType: 'Meeting',
                         attributes: this.model.get('fieldAssignments') || [],
                     };
 

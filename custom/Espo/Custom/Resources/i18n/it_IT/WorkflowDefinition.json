@@ -60,6 +60,8 @@
         },
         "actions": {
             "record.create_record": "Record: Crea record",
+            "record.create_task": "Record: Crea compito",
+            "record.create_meeting": "Record: Crea riunione",
             "record.update_record": "Record: Aggiorna record",
             "record.assign_owner": "Record: Assegna proprietario",
             "email.send_email": "Email: Invia email",

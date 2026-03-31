@@ -60,6 +60,8 @@
         },
         "actions": {
             "record.create_record": "Запись: Создать запись",
+            "record.create_task": "Запись: Создать задачу",
+            "record.create_meeting": "Запись: Создать встречу",
             "record.update_record": "Запись: Обновить запись",
             "record.assign_owner": "Запись: Назначить владельца",
             "email.send_email": "Email: Отправить письмо",

@@ -31,6 +31,8 @@ class RecordActionProvider implements WorkflowActionProvider
     {
         return [
             'create_record',
+            'create_task',
+            'create_meeting',
             'update_record',
             'assign_owner',
         ];
@@ -42,13 +44,21 @@ class RecordActionProvider implements WorkflowActionProvider
 
         return match ($normalizedAction) {
             'create_record' => $this->executeCreateRecord($payload, $context),
+            'create_task' => $this->executeCreateRecord([
+                ...$payload,
+                'entityType' => 'Task',
+            ], $context, 'create_task'),
+            'create_meeting' => $this->executeCreateRecord([
+                ...$payload,
+                'entityType' => 'Meeting',
+            ], $context, 'create_meeting'),
             'update_record' => $this->executeUpdateRecord($payload, $context),
             'assign_owner' => $this->executeAssignOwner($payload, $context),
             default => throw new RuntimeException('Unsupported record workflow action: ' . $action),
         };
     }
 
-    private function executeCreateRecord(array $payload, array $context): array
+    private function executeCreateRecord(array $payload, array $context, string $resultAction = 'create_record'): array
     {
         $entityType = (string) ($payload['entityType'] ?? $payload['scope'] ?? '');
         $attributes = $this->workflowValueResolver->resolveAssignments(
@@ -84,7 +94,7 @@ class RecordActionProvider implements WorkflowActionProvider
         return [
             'entityType' => $entityType,
             'id' => $entity->getId(),
-            'action' => 'create_record',
+            'action' => $resultAction,
         ];
     }
 

@@ -16,6 +16,7 @@ define('custom:views/workflows/modals/edit-value-config', [
             this.valueType = this.options.valueType || 'varchar';
             this.valueOptions = this.options.valueOptions || [];
             this.translatedValueOptions = this.options.translatedValueOptions || {};
+            this.constantFieldDefs = this.options.fieldDefs || null;
             this.headerText = this.options.headerText || this.translate('Value', 'fields', 'WorkflowDefinition');
             this.valueConfig = this.normalizeValueConfig(this.options.valueConfig);
             this.fieldCatalog = new FieldCatalog(this);
@@ -181,6 +182,10 @@ define('custom:views/workflows/modals/edit-value-config', [
         }
 
         getConstantFieldDefs() {
+            if (this.constantFieldDefs && typeof this.constantFieldDefs === 'object') {
+                return this.constantFieldDefs;
+            }
+
             if (this.valueType === 'enum') {
                 return {
                     type: 'enum',
