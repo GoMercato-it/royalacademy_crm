@@ -27,13 +27,15 @@ class WorkflowTrigger implements AfterSave
         'WorkflowExecution',
         'WorkflowExecutionLog',
         'WorkflowPendingJob',
+        'WorkflowConditionState',
         'Note',
     ];
 
     public function __construct(
         private EntityManager $entityManager,
         private WorkflowRunner $workflowRunner,
-        private WorkflowExecutionService $workflowExecutionService
+        private WorkflowExecutionService $workflowExecutionService,
+        private \Espo\Modules\Workflows\Services\WorkflowConditionStateService $workflowConditionStateService
     ) {
     }
 
@@ -104,10 +106,12 @@ class WorkflowTrigger implements AfterSave
                         1,
                         'condition',
                         'skipped',
-                        'Workflow conditions not met.',
+                        $this->resolveSkippedMessage((string) ($result['reason'] ?? 'conditions_not_met')),
                         [
                             'conditions' => $definition['conditions'] ?? [],
                             'reason' => $result['reason'] ?? 'conditions_not_met',
+                            'conditionPassed' => $result['conditionPassed'] ?? null,
+                            'recurrence' => $result['recurrence'] ?? [],
                         ]
                     );
                 } else {
@@ -123,6 +127,13 @@ class WorkflowTrigger implements AfterSave
                             (string) ($item['action'] ?? '')
                         );
                     }
+
+                    $this->workflowConditionStateService->rememberExecution(
+                        (string) ($definition['id'] ?? ''),
+                        (string) ($context['entityType'] ?? ''),
+                        (string) ($context['entityId'] ?? ''),
+                        $execution->getId()
+                    );
                 }
 
                 $this->workflowExecutionService->complete($execution, $result);
@@ -168,6 +179,7 @@ class WorkflowTrigger implements AfterSave
             'triggerType' => (string) $definitionEntity->get('triggerType'),
             'entityType' => (string) $definitionEntity->get('entityType'),
             'executionMode' => (string) $definitionEntity->get('executionMode'),
+            'updateRecurrenceMode' => (string) $definitionEntity->get('updateRecurrenceMode'),
             'isEnabled' => (bool) $definitionEntity->get('isEnabled'),
             'conditions' => $this->normalizeStructuredValue($definitionEntity->get('conditions')),
             'actions' => $this->normalizeStructuredValue($definitionEntity->get('actions')),
@@ -190,5 +202,13 @@ class WorkflowTrigger implements AfterSave
         unset($result['entity']);
 
         return $result;
+    }
+
+    private function resolveSkippedMessage(string $reason): string
+    {
+        return match ($reason) {
+            'recurrence_not_met' => 'Workflow skipped by update recurrence mode.',
+            default => 'Workflow conditions not met.',
+        };
     }
 }

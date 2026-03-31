@@ -27,6 +27,11 @@
             "options": ["sync", "queued"],
             "default": "sync"
         },
+        "updateRecurrenceMode": {
+            "type": "enum",
+            "options": ["every_time_true", "first_false_to_true"],
+            "default": "every_time_true"
+        },
         "isEnabled": {
             "type": "bool",
             "default": true

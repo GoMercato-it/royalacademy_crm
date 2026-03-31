@@ -9,6 +9,7 @@ use Espo\ORM\Entity;
 use Espo\ORM\EntityManager;
 use Espo\Modules\Workflows\Contracts\WorkflowActionProvider;
 use Espo\Modules\Workflows\Services\WorkflowStreamAnnotationService;
+use Espo\Modules\Workflows\Services\WorkflowValueResolver;
 use RuntimeException;
 
 class RecordActionProvider implements WorkflowActionProvider
@@ -16,7 +17,8 @@ class RecordActionProvider implements WorkflowActionProvider
     public function __construct(
         private EntityManager $entityManager,
         private WorkflowStreamAnnotationService $workflowStreamAnnotationService,
-        private SystemUser $systemUser
+        private SystemUser $systemUser,
+        private WorkflowValueResolver $workflowValueResolver
     ) {
     }
 
@@ -49,7 +51,10 @@ class RecordActionProvider implements WorkflowActionProvider
     private function executeCreateRecord(array $payload, array $context): array
     {
         $entityType = (string) ($payload['entityType'] ?? $payload['scope'] ?? '');
-        $attributes = $this->normalizeAttributes($payload['attributes'] ?? $payload['data'] ?? []);
+        $attributes = $this->workflowValueResolver->resolveAssignments(
+            $this->normalizeAttributes($payload['attributes'] ?? $payload['data'] ?? []),
+            $context
+        );
 
         if ($entityType === '') {
             throw new RuntimeException('entityType is required for record create_record');
@@ -86,8 +91,11 @@ class RecordActionProvider implements WorkflowActionProvider
     private function executeUpdateRecord(array $payload, array $context): array
     {
         $entityType = (string) ($payload['entityType'] ?? $payload['scope'] ?? '');
-        $id = (string) ($payload['id'] ?? $payload['recordId'] ?? '');
-        $attributes = $this->normalizeAttributes($payload['attributes'] ?? $payload['data'] ?? []);
+        $id = (string) $this->workflowValueResolver->resolveValue($payload['id'] ?? $payload['recordId'] ?? '', $context);
+        $attributes = $this->workflowValueResolver->resolveAssignments(
+            $this->normalizeAttributes($payload['attributes'] ?? $payload['data'] ?? []),
+            $context
+        );
 
         if ($entityType === '' || $id === '') {
             throw new RuntimeException('entityType and id are required for record update_record');
@@ -128,7 +136,10 @@ class RecordActionProvider implements WorkflowActionProvider
 
     private function executeAssignOwner(array $payload, array $context): array
     {
-        $assignedUserId = (string) ($payload['assignedUserId'] ?? $payload['ownerUserId'] ?? '');
+        $assignedUserId = (string) $this->workflowValueResolver->resolveValue(
+            $payload['assignedUserId'] ?? $payload['ownerUserId'] ?? '',
+            $context
+        );
 
         if ($assignedUserId === '') {
             throw new RuntimeException('assignedUserId is required for record assign_owner');

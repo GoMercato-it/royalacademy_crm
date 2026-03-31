@@ -7,7 +7,8 @@ class WorkflowRunner
     public function __construct(
         private WorkflowTriggerResolver $workflowTriggerResolver,
         private WorkflowConditionEvaluator $workflowConditionEvaluator,
-        private WorkflowActionExecutor $workflowActionExecutor
+        private WorkflowActionExecutor $workflowActionExecutor,
+        private WorkflowConditionStateService $workflowConditionStateService
     ) {
     }
 
@@ -28,12 +29,15 @@ class WorkflowRunner
         ]);
 
         $passes = $this->workflowConditionEvaluator->passes($conditions, $context);
+        $recurrence = $this->workflowConditionStateService->evaluate($definition, $context, $passes);
 
-        if (!$passes) {
+        if (($recurrence['shouldExecute'] ?? false) !== true) {
             return [
                 'trigger' => $trigger,
                 'executed' => false,
-                'reason' => 'conditions_not_met',
+                'reason' => (string) ($recurrence['reason'] ?? 'conditions_not_met'),
+                'conditionPassed' => $passes,
+                'recurrence' => $recurrence,
                 'results' => [],
             ];
         }
@@ -41,6 +45,8 @@ class WorkflowRunner
         return [
             'trigger' => $trigger,
             'executed' => true,
+            'conditionPassed' => $passes,
+            'recurrence' => $recurrence,
             'results' => $this->workflowActionExecutor->executeActions($actions, $context),
         ];
     }

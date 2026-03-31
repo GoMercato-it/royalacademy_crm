@@ -1,0 +1,48 @@
+{
+    "fields": {
+        "workflowDefinitionId": {
+            "type": "varchar",
+            "required": true,
+            "len": 50,
+            "index": true
+        },
+        "relatedEntityType": {
+            "type": "varchar",
+            "required": true,
+            "len": 100,
+            "index": true
+        },
+        "relatedEntityId": {
+            "type": "varchar",
+            "required": true,
+            "len": 50,
+            "index": true
+        },
+        "lastConditionState": {
+            "type": "bool",
+            "default": false
+        },
+        "lastEvaluatedAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "lastTriggeredAt": {
+            "type": "datetime",
+            "index": true
+        },
+        "lastExecutionId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        }
+    },
+    "collection": {
+        "sortBy": "lastEvaluatedAt",
+        "asc": false
+    },
+    "indexes": {
+        "workflowRecord": {
+            "columns": ["workflowDefinitionId", "relatedEntityType", "relatedEntityId"]
+        }
+    }
+}

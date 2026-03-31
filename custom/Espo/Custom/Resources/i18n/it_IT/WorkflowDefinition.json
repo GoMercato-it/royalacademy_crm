@@ -6,6 +6,7 @@
         "entityType": "Tipo Entità",
         "targetEntityType": "Entità Target",
         "executionMode": "Modalità Esecuzione",
+        "updateRecurrenceMode": "Ripetizione su aggiornamento",
         "isEnabled": "Abilitato",
         "conditions": "Condizioni",
         "actions": "Azioni",
@@ -19,14 +20,18 @@
         "emailBody": "Corpo email",
         "fieldAssignments": "Campi",
         "field": "Campo",
-        "value": "Valore"
+        "value": "Valore",
+        "sourceType": "Origine valore",
+        "sourceField": "Campo sorgente",
+        "expression": "Espressione"
     },
     "labels": {
         "Target": "Target",
         "Fields": "Campi",
         "Assigned User": "Utente assegnato",
         "Target Entity": "Entità Target",
-        "Field Value": "Valore campo"
+        "Field Value": "Valore campo",
+        "Raw Text": "Testo libero"
     },
     "options": {
         "status": {
@@ -46,6 +51,10 @@
             "sync": "Sincrono",
             "queued": "In coda"
         },
+        "updateRecurrenceMode": {
+            "every_time_true": "Ogni volta che la condizione è vera",
+            "first_false_to_true": "Solo al passaggio da falso a vero"
+        },
         "actions": {
             "record.create_record": "Record: Crea record",
             "record.update_record": "Record: Aggiorna record",
@@ -63,6 +72,7 @@
     "messages": {
         "selectEntityTypeFirst": "Seleziona prima il tipo di entità.",
         "selectTargetEntityFirst": "Seleziona prima l'entità target.",
+        "selectSourceFieldFirst": "Seleziona prima il campo sorgente.",
         "configurationAvailableInEditor": "Configurazione disponibile nell'editor"
     }
 }

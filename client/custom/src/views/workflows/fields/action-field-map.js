@@ -68,6 +68,8 @@ define('custom:views/workflows/fields/action-field-map', [
         setup() {
             super.setup();
 
+            this.sourceEntityType = this.options.sourceEntityType || this.params.sourceEntityType || '';
+
             this.addActionHandler('addItem', () => this.addItem());
             this.addActionHandler('editItem', (e, target) => this.editItem(parseInt(target.dataset.index)));
             this.addActionHandler('removeItem', (e, target) => this.removeItem(parseInt(target.dataset.index)));
@@ -135,6 +137,7 @@ define('custom:views/workflows/fields/action-field-map', [
         openItemModal(item, onApply) {
             this.createView('dialog', 'custom:views/workflows/modals/edit-field-map-item', {
                 entityType: this.model.get('targetEntityType'),
+                sourceEntityType: this.sourceEntityType,
                 item: Espo.Utils.cloneDeep(item),
             }, view => {
                 view.render();
@@ -157,8 +160,45 @@ define('custom:views/workflows/fields/action-field-map', [
             return this.itemList.map((item, index) => ({
                 index: index,
                 fieldLabel: this.translate(item.field || '', 'fields', entityType) || item.field || '',
-                valueLabel: item.value || '',
+                valueLabel: this.getValueLabel(item),
             }));
+        }
+
+        getValueLabel(item) {
+            const sourceType = (item.sourceType || (item.expression ? 'expression' : item.sourceField ? 'field' : 'constant')).toString();
+
+            if (sourceType === 'field') {
+                const sourceField = item.sourceField || '';
+                const sourceFieldLabel = this.getSourceFieldLabel(sourceField);
+
+                return `${this.translate('Source Field', 'fields', 'WorkflowDefinition')}: ${sourceFieldLabel}`;
+            }
+
+            if (sourceType === 'expression') {
+                return `${this.translate('Expression', 'fields', 'WorkflowDefinition')}: ${item.expression || ''}`;
+            }
+
+            return item.value || '';
+        }
+
+        getSourceFieldLabel(field) {
+            if (!field) {
+                return '';
+            }
+
+            const sourceEntityType = this.sourceEntityType || '';
+
+            if (!sourceEntityType || !field.includes('.')) {
+                return this.translate(field, 'fields', sourceEntityType) || field;
+            }
+
+            const [link, attribute] = field.split('.', 2);
+            const linkDefs = this.getMetadata().get(['entityDefs', sourceEntityType, 'links', link]) || {};
+            const relatedEntityType = linkDefs.entity || '';
+            const linkLabel = this.translate(link, 'links', sourceEntityType) || this.translate(link, 'fields', sourceEntityType) || link;
+            const attributeLabel = this.translate(attribute, 'fields', relatedEntityType) || attribute;
+
+            return `${linkLabel} > ${attributeLabel}`;
         }
     };
 });

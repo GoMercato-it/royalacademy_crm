@@ -6,6 +6,7 @@
         "entityType": "Тип сущности",
         "targetEntityType": "Целевая сущность",
         "executionMode": "Режим выполнения",
+        "updateRecurrenceMode": "Повторение при обновлении",
         "isEnabled": "Включено",
         "conditions": "Условия",
         "actions": "Действия",
@@ -19,14 +20,18 @@
         "emailBody": "Тело письма",
         "fieldAssignments": "Поля",
         "field": "Поле",
-        "value": "Значение"
+        "value": "Значение",
+        "sourceType": "Источник значения",
+        "sourceField": "Поле-источник",
+        "expression": "Выражение"
     },
     "labels": {
         "Target": "Цель",
         "Fields": "Поля",
         "Assigned User": "Назначенный пользователь",
         "Target Entity": "Целевая сущность",
-        "Field Value": "Значение поля"
+        "Field Value": "Значение поля",
+        "Raw Text": "Сырой текст"
     },
     "options": {
         "status": {
@@ -46,6 +51,10 @@
             "sync": "Синхронно",
             "queued": "В очереди"
         },
+        "updateRecurrenceMode": {
+            "every_time_true": "Каждый раз, когда условие истинно",
+            "first_false_to_true": "Только при переходе ложь в истину"
+        },
         "actions": {
             "record.create_record": "Запись: Создать запись",
             "record.update_record": "Запись: Обновить запись",
@@ -63,6 +72,7 @@
     "messages": {
         "selectEntityTypeFirst": "Сначала выберите тип сущности.",
         "selectTargetEntityFirst": "Сначала выберите целевую сущность.",
+        "selectSourceFieldFirst": "Сначала выберите поле-источник.",
         "configurationAvailableInEditor": "Конфигурация доступна в редакторе"
     }
 }

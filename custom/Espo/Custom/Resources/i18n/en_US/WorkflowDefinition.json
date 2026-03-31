@@ -6,6 +6,7 @@
         "entityType": "Entity Type",
         "targetEntityType": "Target Entity",
         "executionMode": "Execution Mode",
+        "updateRecurrenceMode": "Update Recurrence",
         "isEnabled": "Enabled",
         "conditions": "Conditions",
         "actions": "Actions",
@@ -19,14 +20,18 @@
         "emailBody": "Email Body",
         "fieldAssignments": "Fields",
         "field": "Field",
-        "value": "Value"
+        "value": "Value",
+        "sourceType": "Value Source",
+        "sourceField": "Source Field",
+        "expression": "Expression"
     },
     "labels": {
         "Target": "Target",
         "Fields": "Fields",
         "Assigned User": "Assigned User",
         "Target Entity": "Target Entity",
-        "Field Value": "Field Value"
+        "Field Value": "Field Value",
+        "Raw Text": "Raw Text"
     },
     "options": {
         "status": {
@@ -46,6 +51,10 @@
             "sync": "Sync",
             "queued": "Queued"
         },
+        "updateRecurrenceMode": {
+            "every_time_true": "Every Time Condition Is True",
+            "first_false_to_true": "Only On False To True"
+        },
         "actions": {
             "record.create_record": "Record: Create Record",
             "record.update_record": "Record: Update Record",
@@ -63,6 +72,7 @@
     "messages": {
         "selectEntityTypeFirst": "Select entity type first.",
         "selectTargetEntityFirst": "Select target entity first.",
+        "selectSourceFieldFirst": "Select source field first.",
         "configurationAvailableInEditor": "Configuration available in editor"
     }
 }

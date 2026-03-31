@@ -14,6 +14,7 @@ define('custom:views/workflows/modals/edit-action', [
 
             this.actionConfig = Espo.Utils.cloneDeep(this.options.actionConfig || {});
             this.actionKey = `${this.actionConfig.provider}.${this.actionConfig.action}`;
+            this.workflowEntityType = this.options.workflowEntityType || '';
 
             this.headerText = this.options.translatedLabel || this.actionKey;
             this.buttonList = [
@@ -161,7 +162,10 @@ define('custom:views/workflows/modals/edit-action', [
                                 [
                                     {
                                         name: 'fieldAssignments',
-                                        labelText: this.translate('Fields', 'fields', 'WorkflowDefinition')
+                                        labelText: this.translate('Fields', 'fields', 'WorkflowDefinition'),
+                                        options: {
+                                            sourceEntityType: this.workflowEntityType
+                                        }
                                     }
                                 ]
                             ]
@@ -185,7 +189,10 @@ define('custom:views/workflows/modals/edit-action', [
                                 [
                                     {
                                         name: 'fieldAssignments',
-                                        labelText: this.translate('Fields', 'fields', 'WorkflowDefinition')
+                                        labelText: this.translate('Fields', 'fields', 'WorkflowDefinition'),
+                                        options: {
+                                            sourceEntityType: this.workflowEntityType
+                                        }
                                     }
                                 ]
                             ]
