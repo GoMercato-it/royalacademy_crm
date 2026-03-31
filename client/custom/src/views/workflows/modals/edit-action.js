@@ -1,8 +1,9 @@
 define('custom:views/workflows/modals/edit-action', [
     'views/modal',
     'model',
-    'views/record/edit-for-modal'
-], function (ModalView, Model, EditForModalView) {
+    'views/record/edit-for-modal',
+    'custom:workflows/field-catalog'
+], function (ModalView, Model, EditForModalView, FieldCatalog) {
 
     return class extends ModalView {
 
@@ -15,6 +16,7 @@ define('custom:views/workflows/modals/edit-action', [
             this.actionConfig = Espo.Utils.cloneDeep(this.options.actionConfig || {});
             this.actionKey = `${this.actionConfig.provider}.${this.actionConfig.action}`;
             this.workflowEntityType = this.options.workflowEntityType || '';
+            this.fieldCatalog = new FieldCatalog(this);
 
             this.headerText = this.options.translatedLabel || this.actionKey;
             this.buttonList = [
@@ -74,13 +76,28 @@ define('custom:views/workflows/modals/edit-action', [
                 case 'record.create_task':
                     return {
                         targetEntityType: 'Task',
-                        fieldAssignments: this.normalizeFieldAssignments(payload.attributes || []),
+                        taskNameConfig: this.extractAssignmentValueConfig(payload, 'name'),
+                        taskDescriptionConfig: this.extractAssignmentValueConfig(payload, 'description'),
+                        taskStatusConfig: this.extractAssignmentValueConfig(payload, 'status'),
+                        taskPriorityConfig: this.extractAssignmentValueConfig(payload, 'priority'),
+                        taskDateStartConfig: this.extractAssignmentValueConfig(payload, 'dateStart'),
+                        taskDateEndConfig: this.extractAssignmentValueConfig(payload, 'dateEnd'),
+                        taskAssignedUserConfig: this.extractAssignmentValueConfig(payload, 'assignedUserId'),
+                        taskParentTypeConfig: this.extractAssignmentValueConfig(payload, 'parentType'),
+                        taskParentIdConfig: this.extractAssignmentValueConfig(payload, 'parentId'),
                     };
 
                 case 'record.create_meeting':
                     return {
                         targetEntityType: 'Meeting',
-                        fieldAssignments: this.normalizeFieldAssignments(payload.attributes || []),
+                        meetingNameConfig: this.extractAssignmentValueConfig(payload, 'name'),
+                        meetingDescriptionConfig: this.extractAssignmentValueConfig(payload, 'description'),
+                        meetingStatusConfig: this.extractAssignmentValueConfig(payload, 'status'),
+                        meetingAssignedUserConfig: this.extractAssignmentValueConfig(payload, 'assignedUserId'),
+                        meetingParentTypeConfig: this.extractAssignmentValueConfig(payload, 'parentType'),
+                        meetingParentIdConfig: this.extractAssignmentValueConfig(payload, 'parentId'),
+                        meetingDateStartConfig: this.extractAssignmentValueConfig(payload, 'dateStart'),
+                        meetingDateEndConfig: this.extractAssignmentValueConfig(payload, 'dateEnd'),
                     };
 
                 case 'record.update_record':
@@ -134,6 +151,74 @@ define('custom:views/workflows/modals/edit-action', [
                         type: 'base',
                         view: 'custom:views/workflows/fields/action-field-map'
                     },
+                    taskNameConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskDescriptionConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskStatusConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskPriorityConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskDateStartConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskDateEndConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskAssignedUserConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskParentTypeConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    taskParentIdConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingNameConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingDescriptionConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingStatusConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingAssignedUserConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingParentTypeConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingParentIdConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingDateStartConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    meetingDateEndConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
                     waIdConfig: {
                         type: 'base',
                         view: 'custom:views/workflows/fields/value-config'
@@ -184,17 +269,118 @@ define('custom:views/workflows/modals/edit-action', [
                     ];
 
                 case 'record.create_task':
+                    return [
+                        {
+                            rows: [
+                                [
+                                    {
+                                        name: 'taskNameConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'name'),
+                                        options: this.getTargetFieldOptions('Task', 'name')
+                                    },
+                                    {
+                                        name: 'taskStatusConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'status'),
+                                        options: this.getTargetFieldOptions('Task', 'status')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'taskPriorityConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'priority'),
+                                        options: this.getTargetFieldOptions('Task', 'priority')
+                                    },
+                                    {
+                                        name: 'taskDateEndConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'dateEnd'),
+                                        options: this.getTargetFieldOptions('Task', 'dateEnd')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'taskDateStartConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'dateStart'),
+                                        options: this.getTargetFieldOptions('Task', 'dateStart')
+                                    },
+                                    {
+                                        name: 'taskAssignedUserConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'assignedUserId'),
+                                        options: this.getTargetFieldOptions('Task', 'assignedUserId')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'taskParentTypeConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'parentType'),
+                                        options: this.getTargetFieldOptions('Task', 'parentType')
+                                    },
+                                    {
+                                        name: 'taskParentIdConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'parentId'),
+                                        options: this.getTargetFieldOptions('Task', 'parentId')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'taskDescriptionConfig',
+                                        labelText: this.getTargetFieldLabel('Task', 'description'),
+                                        options: this.getTargetFieldOptions('Task', 'description')
+                                    }
+                                ]
+                            ]
+                        }
+                    ];
+
                 case 'record.create_meeting':
                     return [
                         {
                             rows: [
                                 [
                                     {
-                                        name: 'fieldAssignments',
-                                        labelText: this.translate('Fields', 'fields', 'WorkflowDefinition'),
-                                        options: {
-                                            sourceEntityType: this.workflowEntityType
-                                        }
+                                        name: 'meetingNameConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'name'),
+                                        options: this.getTargetFieldOptions('Meeting', 'name')
+                                    },
+                                    {
+                                        name: 'meetingStatusConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'status'),
+                                        options: this.getTargetFieldOptions('Meeting', 'status')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'meetingDateStartConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'dateStart'),
+                                        options: this.getTargetFieldOptions('Meeting', 'dateStart')
+                                    },
+                                    {
+                                        name: 'meetingDateEndConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'dateEnd'),
+                                        options: this.getTargetFieldOptions('Meeting', 'dateEnd')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'meetingAssignedUserConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'assignedUserId'),
+                                        options: this.getTargetFieldOptions('Meeting', 'assignedUserId')
+                                    },
+                                    {
+                                        name: 'meetingParentTypeConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'parentType'),
+                                        options: this.getTargetFieldOptions('Meeting', 'parentType')
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'meetingParentIdConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'parentId'),
+                                        options: this.getTargetFieldOptions('Meeting', 'parentId')
+                                    },
+                                    {
+                                        name: 'meetingDescriptionConfig',
+                                        labelText: this.getTargetFieldLabel('Meeting', 'description'),
+                                        options: this.getTargetFieldOptions('Meeting', 'description')
                                     }
                                 ]
                             ]
@@ -362,13 +548,32 @@ define('custom:views/workflows/modals/edit-action', [
                 case 'record.create_task':
                     return {
                         entityType: 'Task',
-                        attributes: this.model.get('fieldAssignments') || [],
+                        attributes: this.buildAssignmentList([
+                            ['name', this.model.get('taskNameConfig')],
+                            ['status', this.model.get('taskStatusConfig')],
+                            ['priority', this.model.get('taskPriorityConfig')],
+                            ['dateStart', this.model.get('taskDateStartConfig')],
+                            ['dateEnd', this.model.get('taskDateEndConfig')],
+                            ['assignedUserId', this.model.get('taskAssignedUserConfig')],
+                            ['parentType', this.model.get('taskParentTypeConfig')],
+                            ['parentId', this.model.get('taskParentIdConfig')],
+                            ['description', this.model.get('taskDescriptionConfig')],
+                        ]),
                     };
 
                 case 'record.create_meeting':
                     return {
                         entityType: 'Meeting',
-                        attributes: this.model.get('fieldAssignments') || [],
+                        attributes: this.buildAssignmentList([
+                            ['name', this.model.get('meetingNameConfig')],
+                            ['status', this.model.get('meetingStatusConfig')],
+                            ['dateStart', this.model.get('meetingDateStartConfig')],
+                            ['dateEnd', this.model.get('meetingDateEndConfig')],
+                            ['assignedUserId', this.model.get('meetingAssignedUserConfig')],
+                            ['parentType', this.model.get('meetingParentTypeConfig')],
+                            ['parentId', this.model.get('meetingParentIdConfig')],
+                            ['description', this.model.get('meetingDescriptionConfig')],
+                        ]),
                     };
 
                 case 'record.update_record':
@@ -451,6 +656,68 @@ define('custom:views/workflows/modals/edit-action', [
                     };
                 })
                 .filter(item => item && item.field);
+        }
+
+        extractAssignmentValueConfig(payload, field) {
+            if (!payload || typeof payload !== 'object') {
+                return this.normalizeValueConfig('');
+            }
+
+            if (field in payload) {
+                return this.normalizeValueConfig(payload[field]);
+            }
+
+            const assignmentList = this.normalizeFieldAssignments(payload.attributes || []);
+            const assignment = assignmentList.find(item => item.field === field);
+
+            if (!assignment) {
+                return this.normalizeValueConfig('');
+            }
+
+            return this.normalizeValueConfig({
+                sourceType: assignment.sourceType,
+                value: assignment.value,
+                sourceField: assignment.sourceField,
+                expression: assignment.expression,
+            });
+        }
+
+        buildAssignmentList(itemList) {
+            return itemList
+                .map(([field, valueConfig]) => ({
+                    field: field,
+                    sourceType: valueConfig?.sourceType || 'constant',
+                    value: valueConfig?.value ?? '',
+                    sourceField: valueConfig?.sourceField || '',
+                    expression: valueConfig?.expression || '',
+                }))
+                .filter(item => {
+                    if (!item.field) {
+                        return false;
+                    }
+
+                    if (item.sourceType === 'field') {
+                        return !!item.sourceField;
+                    }
+
+                    if (item.sourceType === 'expression') {
+                        return !!item.expression;
+                    }
+
+                    return item.value !== '' && item.value !== null && item.value !== undefined;
+                });
+        }
+
+        getTargetFieldLabel(entityType, attribute) {
+            return this.fieldCatalog.getTargetFieldLabel(entityType, attribute);
+        }
+
+        getTargetFieldOptions(entityType, attribute) {
+            return {
+                sourceEntityType: this.workflowEntityType,
+                fieldDefs: this.fieldCatalog.getTargetValueFieldDefs(entityType, attribute),
+                headerText: this.fieldCatalog.getTargetFieldLabel(entityType, attribute),
+            };
         }
     };
 });

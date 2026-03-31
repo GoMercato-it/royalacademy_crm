@@ -435,12 +435,27 @@ define('custom:workflows/field-catalog', [], function () {
 
             if (type === 'link' && attribute === `${field}Id`) {
                 const linkDefs = this.getMetadata().get(['entityDefs', entityType, 'links', field]) || {};
+                const linkedEntityType = linkDefs.entity || '';
 
-                if ((linkDefs.entity || '') === 'User') {
+                if (linkedEntityType === 'User') {
                     return {
                         type: 'link',
-                        view: 'views/fields/user',
+                        view: field === 'assignedUser' ? 'views/fields/assigned-user' : 'views/fields/user',
                         entityType: 'User',
+                        params: {
+                            entity: 'User',
+                        },
+                    };
+                }
+
+                if (linkedEntityType) {
+                    return {
+                        type: 'link',
+                        view: 'views/fields/link',
+                        entityType: linkedEntityType,
+                        params: {
+                            entity: linkedEntityType,
+                        },
                     };
                 }
             }
