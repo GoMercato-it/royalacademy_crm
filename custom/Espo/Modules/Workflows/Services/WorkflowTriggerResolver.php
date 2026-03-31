@@ -15,6 +15,7 @@ class WorkflowTriggerResolver
             'manual',
             'record_created',
             'record_updated',
+            'record_saved_including_create',
             'scheduled',
             'signal',
         ];

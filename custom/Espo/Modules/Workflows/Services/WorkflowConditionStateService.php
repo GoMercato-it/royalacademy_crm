@@ -23,7 +23,7 @@ class WorkflowConditionStateService
         $triggerType = (string) ($definition['triggerType'] ?? '');
         $mode = (string) ($definition['updateRecurrenceMode'] ?? 'every_time_true');
 
-        if ($triggerType !== 'record_updated') {
+        if (!in_array($triggerType, ['record_updated', 'record_saved_including_create'], true)) {
             return [
                 'mode' => $mode,
                 'previousState' => null,

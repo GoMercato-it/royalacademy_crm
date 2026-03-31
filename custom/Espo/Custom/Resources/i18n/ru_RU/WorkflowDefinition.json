@@ -48,6 +48,7 @@
             "manual": "Вручную",
             "record_created": "Создание записи",
             "record_updated": "Изменение записи",
+            "record_saved_including_create": "Сохранение записи (включая создание)",
             "scheduled": "По расписанию",
             "signal": "Сигнал"
         },

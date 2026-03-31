@@ -13,7 +13,7 @@
         "triggerType": {
             "type": "enum",
             "required": true,
-            "options": ["manual", "record_created", "record_updated", "scheduled", "signal"],
+            "options": ["manual", "record_created", "record_updated", "record_saved_including_create", "scheduled", "signal"],
             "default": "manual"
         },
         "entityType": {

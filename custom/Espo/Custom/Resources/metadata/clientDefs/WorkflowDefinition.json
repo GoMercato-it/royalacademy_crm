@@ -7,9 +7,19 @@
                 "visible": {
                     "conditionGroup": [
                         {
-                            "type": "equals",
-                            "attribute": "triggerType",
-                            "value": "record_updated"
+                            "type": "or",
+                            "value": [
+                                {
+                                    "type": "equals",
+                                    "attribute": "triggerType",
+                                    "value": "record_updated"
+                                },
+                                {
+                                    "type": "equals",
+                                    "attribute": "triggerType",
+                                    "value": "record_saved_including_create"
+                                }
+                            ]
                         }
                     ]
                 }

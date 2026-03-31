@@ -61,23 +61,28 @@ class WorkflowTrigger implements AfterSave
             return;
         }
 
-        $triggerType = $entity->isNew() ? 'record_created' : 'record_updated';
-        $definitionList = $this->workflowDefinitionService->findActiveByTrigger($triggerType, $entityType);
+        $eventTriggerType = $entity->isNew() ? 'record_created' : 'record_updated';
+        $triggerTypeList = $entity->isNew() ?
+            ['record_created', 'record_saved_including_create'] :
+            ['record_updated', 'record_saved_including_create'];
 
-        if (!$definitionList->count()) {
+        $definitionList = $this->workflowDefinitionService->findActiveByTriggers($triggerTypeList, $entityType);
+
+        if (count($definitionList) === 0) {
             return;
         }
 
-        $context = $this->buildContext($entity);
+        $context = $this->buildContext($entity, $eventTriggerType);
         $executionContext = $this->buildExecutionContext($context);
 
         foreach ($definitionList as $definitionEntity) {
             $definition = $this->workflowDefinitionService->toArray($definitionEntity);
+            $definitionTriggerType = (string) ($definition['triggerType'] ?? $eventTriggerType);
 
             if (($definition['executionMode'] ?? 'sync') === 'queued') {
                 $execution = $this->workflowExecutionService->queue(
                     $definition,
-                    $triggerType,
+                    $definitionTriggerType,
                     $executionContext
                 );
 
@@ -90,14 +95,15 @@ class WorkflowTrigger implements AfterSave
                     [
                         'workflowDefinitionId' => $definition['id'] ?? null,
                         'workflowDefinitionName' => $definition['name'] ?? null,
-                        'triggerType' => $triggerType,
+                        'triggerType' => $definitionTriggerType,
+                        'eventTriggerType' => $eventTriggerType,
                     ]
                 );
 
                 $this->workflowPendingJobService->queue(
                     $execution,
                     $definition,
-                    $triggerType,
+                    $definitionTriggerType,
                     $executionContext
                 );
 
@@ -106,18 +112,18 @@ class WorkflowTrigger implements AfterSave
 
             $execution = $this->workflowExecutionService->start(
                 $definition,
-                $triggerType,
+                $definitionTriggerType,
                 $executionContext
             );
 
-            $this->workflowExecutionRunnerService->execute($execution, $definition, $triggerType, $context);
+            $this->workflowExecutionRunnerService->execute($execution, $definition, $definitionTriggerType, $context);
         }
     }
 
     /**
      * @return array<string, mixed>
      */
-    private function buildContext(CoreEntity $entity): array
+    private function buildContext(CoreEntity $entity, string $eventTriggerType): array
     {
         $contextEntity = $this->entityManager->getEntityById($entity->getEntityType(), $entity->getId()) ?? $entity;
         $attributes = get_object_vars($contextEntity->getValueMap());
@@ -127,6 +133,7 @@ class WorkflowTrigger implements AfterSave
             'entityType' => $contextEntity->getEntityType(),
             'entityId' => $contextEntity->getId(),
             'attributes' => $attributes,
+            'eventTriggerType' => $eventTriggerType,
         ];
     }
 

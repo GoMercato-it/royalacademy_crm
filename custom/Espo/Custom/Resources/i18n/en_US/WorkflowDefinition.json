@@ -48,6 +48,7 @@
             "manual": "Manual",
             "record_created": "Record Created",
             "record_updated": "Record Updated",
+            "record_saved_including_create": "Record Saved (Includes Creation)",
             "scheduled": "Scheduled",
             "signal": "Signal"
         },

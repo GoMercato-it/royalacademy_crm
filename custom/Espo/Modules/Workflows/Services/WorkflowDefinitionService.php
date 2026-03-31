@@ -25,6 +25,23 @@ class WorkflowDefinitionService
             ->find();
     }
 
+    /**
+     * @param string[] $triggerTypeList
+     * @return Entity[]
+     */
+    public function findActiveByTriggers(array $triggerTypeList, string $entityType): array
+    {
+        $resultMap = [];
+
+        foreach (array_values(array_unique(array_filter($triggerTypeList))) as $triggerType) {
+            foreach ($this->findActiveByTrigger($triggerType, $entityType) as $entity) {
+                $resultMap[$entity->getId()] = $entity;
+            }
+        }
+
+        return array_values($resultMap);
+    }
+
     public function findActiveScheduled(): iterable
     {
         return $this->entityManager
