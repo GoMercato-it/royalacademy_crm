@@ -24,13 +24,27 @@ class WorkflowPendingJobService
      */
     public function queue(Entity $execution, array $definition, string $triggerType, array $context, ?string $runAt = null): Entity
     {
+        $queueKey = $this->buildQueueKey($definition, $triggerType, $context, $runAt);
+
+        if ($queueKey) {
+            $existing = $this->findByQueueKey($queueKey);
+
+            if ($existing) {
+                return $existing;
+            }
+        }
+
         $job = $this->entityManager->getNewEntity('WorkflowPendingJob');
         $job->set([
             'workflowDefinitionId' => (string) ($definition['id'] ?? ''),
             'workflowExecutionId' => $execution->getId(),
+            'triggerType' => $triggerType,
+            'relatedEntityType' => (string) ($context['entityType'] ?? $context['workflowEntityType'] ?? ''),
+            'relatedEntityId' => (string) ($context['entityId'] ?? ''),
             'status' => 'queued',
             'runAt' => $runAt ?: date('Y-m-d H:i:s'),
             'attemptCount' => 0,
+            'queueKey' => $queueKey,
             'payload' => $this->sanitize([
                 'triggerType' => $triggerType,
                 'context' => $context,
@@ -41,6 +55,11 @@ class WorkflowPendingJobService
         $this->saveInternal($job);
 
         return $job;
+    }
+
+    public function hasQueueKey(string $queueKey): bool
+    {
+        return $this->findByQueueKey($queueKey) !== null;
     }
 
     /**
@@ -204,6 +223,48 @@ class WorkflowPendingJobService
             SaveOption::NO_NOTIFICATIONS => true,
             SaveOption::SKIP_AUDITED => true,
         ]);
+    }
+
+    private function findByQueueKey(string $queueKey): ?Entity
+    {
+        if ($queueKey === '') {
+            return null;
+        }
+
+        return $this->entityManager
+            ->getRDBRepository('WorkflowPendingJob')
+            ->where([
+                'queueKey' => $queueKey,
+            ])
+            ->findOne();
+    }
+
+    /**
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $context
+     */
+    private function buildQueueKey(array $definition, string $triggerType, array $context, ?string $runAt): ?string
+    {
+        if ($triggerType !== 'scheduled') {
+            return null;
+        }
+
+        $workflowDefinitionId = (string) ($definition['id'] ?? '');
+        $relatedEntityType = (string) ($context['entityType'] ?? $context['workflowEntityType'] ?? '');
+        $relatedEntityId = (string) ($context['entityId'] ?? '');
+        $slot = (string) ($runAt ?: '');
+
+        if ($workflowDefinitionId === '' || $relatedEntityType === '' || $relatedEntityId === '' || $slot === '') {
+            return null;
+        }
+
+        return sha1(implode('|', [
+            'scheduled',
+            $workflowDefinitionId,
+            $relatedEntityType,
+            $relatedEntityId,
+            $slot,
+        ]));
     }
 
     /**

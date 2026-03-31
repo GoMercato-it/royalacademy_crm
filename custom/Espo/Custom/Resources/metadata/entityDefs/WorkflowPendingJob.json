@@ -11,6 +11,21 @@
             "len": 50,
             "index": true
         },
+        "triggerType": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
+        "relatedEntityType": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
+        "relatedEntityId": {
+            "type": "varchar",
+            "len": 50,
+            "index": true
+        },
         "status": {
             "type": "enum",
             "options": ["queued", "running", "completed", "failed", "cancelled"],
@@ -25,6 +40,12 @@
             "type": "int",
             "default": 0
         },
+        "queueKey": {
+            "type": "varchar",
+            "len": 64,
+            "index": true,
+            "unique": true
+        },
         "payload": {
             "type": "jsonObject"
         },
@@ -35,5 +56,13 @@
     "collection": {
         "sortBy": "runAt",
         "asc": true
+    },
+    "indexes": {
+        "workflowRunAt": {
+            "columns": ["workflowDefinitionId", "runAt"]
+        },
+        "workflowRelatedSlot": {
+            "columns": ["workflowDefinitionId", "relatedEntityType", "relatedEntityId", "runAt"]
+        }
     }
 }

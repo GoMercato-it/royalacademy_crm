@@ -27,6 +27,11 @@ class EnsureScheduledJobs implements Command
             'job' => 'RunWorkflowPendingJobs',
             'scheduling' => '* * * * *',
         ],
+        [
+            'name' => 'Queue Scheduled Workflows',
+            'job' => 'QueueScheduledWorkflows',
+            'scheduling' => '* * * * *',
+        ],
     ];
 
     public function __construct(

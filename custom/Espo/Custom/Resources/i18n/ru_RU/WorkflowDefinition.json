@@ -5,6 +5,7 @@
         "triggerType": "Тип триггера",
         "entityType": "Тип сущности",
         "targetEntityType": "Целевая сущность",
+        "scheduling": "Расписание",
         "executionMode": "Режим выполнения",
         "updateRecurrenceMode": "Повторение при обновлении",
         "isEnabled": "Включено",
@@ -76,5 +77,8 @@
         "selectTargetEntityFirst": "Сначала выберите целевую сущность.",
         "selectSourceFieldFirst": "Сначала выберите поле-источник.",
         "configurationAvailableInEditor": "Конфигурация доступна в редакторе"
+    },
+    "tooltips": {
+        "scheduling": "Cron-выражение для workflow по расписанию. Реальное выполнение всё равно идёт через внутреннюю очередь WorkflowPendingJob."
     }
 }

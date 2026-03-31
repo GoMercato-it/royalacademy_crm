@@ -29,6 +29,11 @@
             ],
             [
                 {
+                    "name": "scheduling"
+                }
+            ],
+            [
+                {
                     "name": "isEnabled"
                 }
             ],

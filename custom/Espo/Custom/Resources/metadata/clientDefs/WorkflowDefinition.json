@@ -13,6 +13,17 @@
                         }
                     ]
                 }
+            },
+            "scheduling": {
+                "visible": {
+                    "conditionGroup": [
+                        {
+                            "type": "equals",
+                            "attribute": "triggerType",
+                            "value": "scheduled"
+                        }
+                    ]
+                }
             }
         }
     }

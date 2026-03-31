@@ -16,6 +16,9 @@
         "name": "executionMode"
     },
     {
+        "name": "scheduling"
+    },
+    {
         "name": "updateRecurrenceMode"
     },
     {

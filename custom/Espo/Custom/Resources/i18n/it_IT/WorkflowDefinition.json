@@ -5,6 +5,7 @@
         "triggerType": "Tipo Trigger",
         "entityType": "Tipo Entità",
         "targetEntityType": "Entità Target",
+        "scheduling": "Pianificazione",
         "executionMode": "Modalità Esecuzione",
         "updateRecurrenceMode": "Ripetizione su aggiornamento",
         "isEnabled": "Abilitato",
@@ -76,5 +77,8 @@
         "selectTargetEntityFirst": "Seleziona prima l'entità target.",
         "selectSourceFieldFirst": "Seleziona prima il campo sorgente.",
         "configurationAvailableInEditor": "Configurazione disponibile nell'editor"
+    },
+    "tooltips": {
+        "scheduling": "Espressione cron per i workflow pianificati. L'esecuzione reale passa comunque dalla coda interna WorkflowPendingJob."
     }
 }

@@ -4,5 +4,8 @@
     },
     "RunWorkflowPendingJobs": {
         "jobClassName": "Espo\\Custom\\Classes\\Jobs\\RunWorkflowPendingJobs"
+    },
+    "QueueScheduledWorkflows": {
+        "jobClassName": "Espo\\Custom\\Classes\\Jobs\\QueueScheduledWorkflows"
     }
 }

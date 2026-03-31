@@ -5,6 +5,7 @@
         "triggerType": "Trigger Type",
         "entityType": "Entity Type",
         "targetEntityType": "Target Entity",
+        "scheduling": "Scheduling",
         "executionMode": "Execution Mode",
         "updateRecurrenceMode": "Update Recurrence",
         "isEnabled": "Enabled",
@@ -76,5 +77,8 @@
         "selectTargetEntityFirst": "Select target entity first.",
         "selectSourceFieldFirst": "Select source field first.",
         "configurationAvailableInEditor": "Configuration available in editor"
+    },
+    "tooltips": {
+        "scheduling": "Cron expression for scheduled workflow runs. Public-facing queueing still goes through internal WorkflowPendingJob processing."
     }
 }

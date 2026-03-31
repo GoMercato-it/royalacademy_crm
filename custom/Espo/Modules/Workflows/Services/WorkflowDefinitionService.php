@@ -25,6 +25,20 @@ class WorkflowDefinitionService
             ->find();
     }
 
+    public function findActiveScheduled(): iterable
+    {
+        return $this->entityManager
+            ->getRDBRepository('WorkflowDefinition')
+            ->where([
+                'status' => 'active',
+                'isEnabled' => true,
+                'triggerType' => 'scheduled',
+            ])
+            ->where(['scheduling!=' => null])
+            ->where(['scheduling!=' => ''])
+            ->find();
+    }
+
     /**
      * @return array<string, mixed>|null
      */
@@ -58,6 +72,7 @@ class WorkflowDefinitionService
             'status' => (string) $definitionEntity->get('status'),
             'triggerType' => (string) $definitionEntity->get('triggerType'),
             'entityType' => (string) $definitionEntity->get('entityType'),
+            'scheduling' => (string) $definitionEntity->get('scheduling'),
             'executionMode' => (string) $definitionEntity->get('executionMode'),
             'updateRecurrenceMode' => (string) $definitionEntity->get('updateRecurrenceMode'),
             'isEnabled' => (bool) $definitionEntity->get('isEnabled'),

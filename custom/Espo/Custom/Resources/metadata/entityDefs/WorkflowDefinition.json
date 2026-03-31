@@ -22,6 +22,14 @@
             "index": true,
             "view": "views/fields/entity-type"
         },
+        "scheduling": {
+            "type": "varchar",
+            "view": "views/scheduled-job/fields/scheduling",
+            "tooltip": true,
+            "validatorClassNameList": [
+                "Espo\\Classes\\FieldValidators\\ScheduledJob\\Scheduling\\Valid"
+            ]
+        },
         "executionMode": {
             "type": "enum",
             "options": ["sync", "queued"],
