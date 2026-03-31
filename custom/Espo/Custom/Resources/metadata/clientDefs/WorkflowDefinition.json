@@ -1,4 +1,19 @@
 {
     "controller": "controllers/record",
-    "iconClass": "fas fa-project-diagram"
+    "iconClass": "fas fa-project-diagram",
+    "dynamicLogic": {
+        "fields": {
+            "updateRecurrenceMode": {
+                "visible": {
+                    "conditionGroup": [
+                        {
+                            "type": "equals",
+                            "attribute": "triggerType",
+                            "value": "record_updated"
+                        }
+                    ]
+                }
+            }
+        }
+    }
 }

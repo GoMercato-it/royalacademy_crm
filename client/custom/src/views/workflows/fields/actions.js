@@ -72,11 +72,18 @@ define('custom:views/workflows/fields/actions', [
             this.addActionHandler('editAction', (e, target) => this.editAction(parseInt(target.dataset.index)));
             this.addActionHandler('removeAction', (e, target) => this.removeAction(parseInt(target.dataset.index)));
 
+            this.workflowScope =
+                this.model.entityType ||
+                this.model.name ||
+                this.scope ||
+                'WorkflowDefinition';
             this.actionConfigList = this.normalizeActionConfigList(this.model.get(this.name));
             this.availableActionList =
                 this.params.options ||
                 this.options.options ||
-                this.getMetadata().get(['entityDefs', this.model.entityType, 'fields', this.name, 'options']) ||
+                this.getMetadata().get(['entityDefs', this.workflowScope, 'fields', this.name, 'options']) ||
+                this.getMetadata().get(['entityDefs', 'WorkflowDefinition', 'fields', this.name, 'options']) ||
+                this.getDefaultActionOptionList() ||
                 [];
         }
 
@@ -195,7 +202,7 @@ define('custom:views/workflows/fields/actions', [
             const map = {};
 
             this.availableActionList.forEach(value => {
-                map[value] = this.getLanguage().translateOption(value, this.name, this.scope);
+                map[value] = this.getLanguage().translateOption(value, this.name, this.workflowScope);
             });
 
             return map;
@@ -204,7 +211,7 @@ define('custom:views/workflows/fields/actions', [
         translateActionLabel(item) {
             const key = this.getActionKey(item);
 
-            return this.getLanguage().translateOption(key, this.name, this.scope) || key;
+            return this.getLanguage().translateOption(key, this.name, this.workflowScope) || key;
         }
 
         getActionSummary(item) {
@@ -222,29 +229,29 @@ define('custom:views/workflows/fields/actions', [
                 case 'record.update_record': {
                     const entityType = payload.entityType || this.translate('None');
                     const fieldCount = Array.isArray(payload.attributes) ? payload.attributes.length : 0;
-                    const recordId = payload.id || this.translate('None');
+                    const recordId = this.summarizeValueConfig(payload.id) || this.translate('None');
 
                     return `${this.translate('Target', 'labels', 'WorkflowDefinition')}: ${this.translate(entityType, 'scopeNames')} #${recordId} | ${this.translate('Fields', 'labels', 'WorkflowDefinition')}: ${fieldCount}`;
                 }
 
                 case 'record.assign_owner': {
                     const entityType = payload.entityType || this.translate('None');
-                    const recordId = payload.id || this.translate('None');
-                    const userName = payload.assignedUserName || payload.assignedUserId || this.translate('None');
+                    const recordId = this.summarizeValueConfig(payload.id) || this.translate('None');
+                    const userName = this.summarizeValueConfig(payload.assignedUserId || payload.ownerUserId) || this.translate('None');
 
                     return `${this.translate('Target', 'labels', 'WorkflowDefinition')}: ${this.translate(entityType, 'scopeNames')} #${recordId} | ${this.translate('Assigned User', 'fields', 'WorkflowDefinition')}: ${userName}`;
                 }
 
                 case 'whatsapp.send_message': {
-                    const waId = payload.chatId || payload.waId || this.translate('None');
-                    const body = payload.body || payload.message || '';
+                    const waId = this.summarizeValueConfig(payload.chatId || payload.waId || payload.phone) || this.translate('None');
+                    const body = this.summarizeValueConfig(payload.body || payload.message || payload.text) || '';
 
                     return `${waId}${body ? ' | ' + body : ''}`;
                 }
 
                 case 'email.send_email': {
-                    const to = payload.to || this.translate('None');
-                    const subject = payload.subject || '';
+                    const to = this.summarizeValueConfig(payload.to) || this.translate('None');
+                    const subject = this.summarizeValueConfig(payload.subject) || '';
 
                     return `${to}${subject ? ' | ' + subject : ''}`;
                 }
@@ -276,6 +283,24 @@ define('custom:views/workflows/fields/actions', [
             }).filter(Boolean);
         }
 
+        summarizeValueConfig(value) {
+            if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                return value || '';
+            }
+
+            const sourceType = value.sourceType || (value.sourceField ? 'field' : value.expression ? 'expression' : 'constant');
+
+            if (sourceType === 'field') {
+                return `${this.translate('Source Field', 'fields', 'WorkflowDefinition')}: ${value.sourceField || ''}`;
+            }
+
+            if (sourceType === 'expression') {
+                return `${this.translate('Expression', 'fields', 'WorkflowDefinition')}: ${value.expression || ''}`;
+            }
+
+            return value.value || '';
+        }
+
         createDefaultActionConfig(value) {
             const normalized = (value || '').toString().trim();
 
@@ -296,6 +321,22 @@ define('custom:views/workflows/fields/actions', [
                 action: action,
                 payload: this.getDefaultPayload(provider + '.' + action),
             };
+        }
+
+        getDefaultActionOptionList() {
+            return [
+                'record.create_record',
+                'record.update_record',
+                'record.assign_owner',
+                'email.send_email',
+                'email.queue_email',
+                'email.send_template',
+                'whatsapp.send_message',
+                'whatsapp.schedule_follow_up',
+                'whatsapp.link_chat_to_entity',
+                'whatsapp.assign_conversation_owner',
+                'whatsapp.close_conversation',
+            ];
         }
 
         getDefaultPayload(key) {
@@ -352,20 +393,49 @@ define('custom:views/workflows/fields/actions', [
                     return !!payload.entityType && Array.isArray(payload.attributes) && payload.attributes.length > 0;
 
                 case 'record.update_record':
-                    return !!payload.entityType && !!payload.id && Array.isArray(payload.attributes) && payload.attributes.length > 0;
+                    return !!payload.entityType &&
+                        this.hasMeaningfulValue(payload.id) &&
+                        Array.isArray(payload.attributes) &&
+                        payload.attributes.length > 0;
 
                 case 'record.assign_owner':
-                    return !!payload.entityType && !!payload.id && !!payload.assignedUserId;
+                    return !!payload.entityType &&
+                        this.hasMeaningfulValue(payload.id) &&
+                        this.hasMeaningfulValue(payload.assignedUserId);
 
                 case 'whatsapp.send_message':
-                    return !!(payload.waId || payload.chatId) && !!(payload.body || payload.message);
+                    return this.hasMeaningfulValue(payload.waId || payload.chatId) &&
+                        this.hasMeaningfulValue(payload.body || payload.message);
 
                 case 'email.send_email':
-                    return !!payload.to && !!payload.subject;
+                    return this.hasMeaningfulValue(payload.to) &&
+                        this.hasMeaningfulValue(payload.subject);
 
                 default:
                     return Object.keys(payload).length > 0;
             }
+        }
+
+        hasMeaningfulValue(value) {
+            if (value === null || value === undefined) {
+                return false;
+            }
+
+            if (typeof value !== 'object' || Array.isArray(value)) {
+                return value !== '';
+            }
+
+            const sourceType = value.sourceType || (value.sourceField ? 'field' : value.expression ? 'expression' : 'constant');
+
+            if (sourceType === 'field') {
+                return !!value.sourceField;
+            }
+
+            if (sourceType === 'expression') {
+                return !!value.expression;
+            }
+
+            return value.value !== '' && value.value !== null && value.value !== undefined;
         }
     };
 });

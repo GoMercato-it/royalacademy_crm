@@ -1,4 +1,4 @@
-define('custom:views/workflows/modals/edit-field-map-item', [
+define('custom:views/workflows/modals/edit-value-config', [
     'views/modal',
     'model'
 ], function (ModalView, Model) {
@@ -11,11 +11,13 @@ define('custom:views/workflows/modals/edit-field-map-item', [
         setup() {
             super.setup();
 
-            this.entityType = this.options.entityType;
             this.sourceEntityType = this.options.sourceEntityType || '';
-            this.item = this.options.item || {};
+            this.valueType = this.options.valueType || 'varchar';
+            this.valueOptions = this.options.valueOptions || [];
+            this.translatedValueOptions = this.options.translatedValueOptions || {};
+            this.headerText = this.options.headerText || this.translate('Value', 'fields', 'WorkflowDefinition');
+            this.valueConfig = this.normalizeValueConfig(this.options.valueConfig);
 
-            this.headerText = this.translate('Field Value', 'labels', 'WorkflowDefinition');
             this.buttonList = [
                 {
                     name: 'apply',
@@ -32,18 +34,15 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             };
 
             const model = this.model = new Model();
-            model.name = 'WorkflowFieldMapping';
+            model.name = 'WorkflowValueConfig';
             model.set({
-                field: this.item.field || '',
-                sourceType: this.getSourceType(),
-                constantValue: this.item.value ?? '',
-                sourceField: this.item.sourceField || '',
-                expression: this.item.expression || '',
+                sourceType: this.valueConfig.sourceType,
+                constantValue: this.valueConfig.value,
+                sourceField: this.valueConfig.sourceField,
+                expression: this.valueConfig.expression,
             });
 
             this.listenTo(model, 'change:sourceType', () => this.rebuildRecordView());
-            this.listenTo(model, 'change:field', () => this.rebuildRecordView());
-
             this.rebuildRecordView();
         }
 
@@ -63,7 +62,6 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             recordView.processFetch();
 
             this.trigger('apply', {
-                field: this.model.get('field') || '',
                 sourceType: this.model.get('sourceType') || 'constant',
                 value: this.model.has('constantValue') ? this.model.get('constantValue') : '',
                 sourceField: this.model.get('sourceField') || '',
@@ -73,24 +71,49 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             this.close();
         }
 
-        getSourceType() {
-            if (this.item.sourceType) {
-                return this.item.sourceType;
+        normalizeValueConfig(valueConfig) {
+            if (valueConfig && typeof valueConfig === 'object' && !Array.isArray(valueConfig)) {
+                return {
+                    sourceType: valueConfig.sourceType || (valueConfig.sourceField ? 'field' : valueConfig.expression ? 'expression' : 'constant'),
+                    value: valueConfig.value ?? '',
+                    sourceField: valueConfig.sourceField || '',
+                    expression: valueConfig.expression || '',
+                };
             }
 
-            if (this.item.expression) {
-                return 'expression';
-            }
-
-            if (this.item.sourceField) {
-                return 'field';
-            }
-
-            return 'constant';
+            return {
+                sourceType: 'constant',
+                value: valueConfig ?? '',
+                sourceField: '',
+                expression: '',
+            };
         }
 
         rebuildRecordView() {
-            this.model.setDefs(this.buildModelDefs());
+            this.model.setDefs({
+                fields: {
+                    sourceType: {
+                        type: 'enum',
+                        required: true,
+                        options: ['constant', 'field', 'expression'],
+                        translatedOptions: {
+                            constant: this.translate('Raw Text', 'labels', 'WorkflowDefinition'),
+                            field: this.translate('Source Field', 'fields', 'WorkflowDefinition'),
+                            expression: this.translate('Expression', 'fields', 'WorkflowDefinition'),
+                        }
+                    },
+                    constantValue: this.getConstantFieldDefs(),
+                    sourceField: {
+                        type: 'enum',
+                        options: this.getSourceFieldOptionList(),
+                        translatedOptions: this.getTranslatedSourceFieldOptions()
+                    },
+                    expression: {
+                        type: 'formula',
+                        view: 'views/fields/formula'
+                    }
+                }
+            });
 
             if (this.hasView('record')) {
                 this.clearView('record');
@@ -106,47 +129,8 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             });
         }
 
-        buildModelDefs() {
-            return {
-                fields: {
-                    field: {
-                        type: 'enum',
-                        required: true,
-                        options: this.getFieldOptionList(),
-                        translatedOptions: this.getTranslatedFieldOptions()
-                    },
-                    sourceType: {
-                        type: 'enum',
-                        required: true,
-                        options: ['constant', 'field', 'expression'],
-                        translatedOptions: {
-                            constant: this.translate('Raw Text', 'labels', 'WorkflowDefinition'),
-                            field: this.translate('Source Field', 'fields', 'WorkflowDefinition'),
-                            expression: this.translate('Expression', 'fields', 'WorkflowDefinition'),
-                        }
-                    },
-                    constantValue: this.getConstantValueFieldDefs(),
-                    sourceField: {
-                        type: 'enum',
-                        options: this.getSourceFieldOptionList(),
-                        translatedOptions: this.getTranslatedSourceFieldOptions()
-                    },
-                    expression: {
-                        type: 'formula',
-                        view: 'views/fields/formula'
-                    }
-                }
-            };
-        }
-
         buildDetailLayout() {
             const rows = [
-                [
-                    {
-                        name: 'field',
-                        labelText: this.translate('Field', 'fields', 'WorkflowDefinition')
-                    }
-                ],
                 [
                     {
                         name: 'sourceType',
@@ -194,51 +178,68 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             ];
         }
 
-        getFieldOptionList() {
-            const fields = this.getMetadata().get(['entityDefs', this.entityType, 'fields']) || {};
+        getConstantFieldDefs() {
+            if (this.valueType === 'enum') {
+                return {
+                    type: 'enum',
+                    options: this.valueOptions,
+                    translatedOptions: this.translatedValueOptions
+                };
+            }
 
-            return Object.keys(fields).filter(name => {
-                const defs = fields[name] || {};
-                const type = defs.type || '';
+            if (this.valueType === 'multiEnum' || this.valueType === 'checklist') {
+                return {
+                    type: this.valueType,
+                    options: this.valueOptions,
+                    translatedOptions: this.translatedValueOptions
+                };
+            }
 
-                if (defs.readOnly || defs.notStorable) {
-                    return false;
-                }
+            if (this.valueType === 'bool') {
+                return {
+                    type: 'bool'
+                };
+            }
 
-                if ([
-                    'link',
-                    'linkParent',
-                    'linkMultiple',
-                    'file',
-                    'image',
-                    'jsonObject',
-                    'jsonArray',
-                    'base',
-                    'foreign',
-                    'foreignId',
-                    'foreignArray',
-                    'map'
-                ].includes(type)) {
-                    return false;
-                }
+            if (this.valueType === 'date') {
+                return {
+                    type: 'date'
+                };
+            }
 
-                return true;
-            }).sort((a, b) => {
-                const aLabel = this.translate(a, 'fields', this.entityType) || a;
-                const bLabel = this.translate(b, 'fields', this.entityType) || b;
+            if (this.valueType === 'datetime' || this.valueType === 'datetimeOptional') {
+                return {
+                    type: this.valueType
+                };
+            }
 
-                return aLabel.localeCompare(bLabel);
-            });
-        }
+            if (this.valueType === 'int' || this.valueType === 'enumInt') {
+                return {
+                    type: 'int'
+                };
+            }
 
-        getTranslatedFieldOptions() {
-            const translated = {};
+            if (this.valueType === 'float' || this.valueType === 'currency' || this.valueType === 'number' || this.valueType === 'enumFloat') {
+                return {
+                    type: 'float'
+                };
+            }
 
-            this.getFieldOptionList().forEach(name => {
-                translated[name] = this.translate(name, 'fields', this.entityType) || name;
-            });
+            if (this.valueType === 'text' || this.valueType === 'wysiwyg') {
+                return {
+                    type: 'text'
+                };
+            }
 
-            return translated;
+            if (this.valueType === 'email') {
+                return {
+                    type: 'email'
+                };
+            }
+
+            return {
+                type: 'varchar'
+            };
         }
 
         getSourceFieldOptionList() {
@@ -255,11 +256,7 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             Object.keys(links).forEach(link => {
                 const type = links[link].type;
 
-                if (!type) {
-                    return;
-                }
-
-                if (['belongsToParent', 'hasOne', 'belongsTo'].includes(type)) {
+                if (type && ['belongsToParent', 'hasOne', 'belongsTo'].includes(type)) {
                     linkList.push(link);
                 }
             });
@@ -307,79 +304,6 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             const attributeLabel = this.translate(attribute, 'fields', relatedEntityType) || attribute;
 
             return `${linkLabel} > ${attributeLabel}`;
-        }
-
-        getConstantValueFieldDefs() {
-            const field = this.model.get('field') || '';
-            const allDefs = this.getMetadata().get(['entityDefs', this.entityType, 'fields']) || {};
-            const fieldDefs = field ? (allDefs[field] || {}) : {};
-            const type = fieldDefs.type || 'varchar';
-
-            if (type === 'enum') {
-                return {
-                    type: 'enum',
-                    options: fieldDefs.options || [],
-                    translatedOptions: this.getTranslatedTargetFieldOptions(field, fieldDefs.options || [])
-                };
-            }
-
-            if (type === 'multiEnum' || type === 'checklist') {
-                return {
-                    type: type,
-                    options: fieldDefs.options || [],
-                    translatedOptions: this.getTranslatedTargetFieldOptions(field, fieldDefs.options || [])
-                };
-            }
-
-            if (type === 'bool') {
-                return {
-                    type: 'bool'
-                };
-            }
-
-            if (type === 'date') {
-                return {
-                    type: 'date'
-                };
-            }
-
-            if (type === 'datetime' || type === 'datetimeOptional') {
-                return {
-                    type: type
-                };
-            }
-
-            if (type === 'int' || type === 'enumInt') {
-                return {
-                    type: 'int'
-                };
-            }
-
-            if (type === 'float' || type === 'currency' || type === 'number' || type === 'enumFloat') {
-                return {
-                    type: 'float'
-                };
-            }
-
-            if (type === 'text' || type === 'wysiwyg') {
-                return {
-                    type: 'text'
-                };
-            }
-
-            return {
-                type: 'varchar'
-            };
-        }
-
-        getTranslatedTargetFieldOptions(field, options) {
-            const translated = {};
-
-            options.forEach(option => {
-                translated[option] = this.getLanguage().translateOption(option, field, this.entityType) || option;
-            });
-
-            return translated;
         }
     };
 });

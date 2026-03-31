@@ -28,6 +28,8 @@
     "labels": {
         "Target": "Цель",
         "Fields": "Поля",
+        "All Conditions": "Все условия",
+        "Any Conditions": "Любое условие",
         "Assigned User": "Назначенный пользователь",
         "Target Entity": "Целевая сущность",
         "Field Value": "Значение поля",

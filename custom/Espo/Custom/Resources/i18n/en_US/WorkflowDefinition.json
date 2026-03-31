@@ -28,6 +28,8 @@
     "labels": {
         "Target": "Target",
         "Fields": "Fields",
+        "All Conditions": "All Conditions",
+        "Any Conditions": "Any Conditions",
         "Assigned User": "Assigned User",
         "Target Entity": "Target Entity",
         "Field Value": "Field Value",

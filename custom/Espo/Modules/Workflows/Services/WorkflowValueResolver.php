@@ -60,7 +60,10 @@ class WorkflowValueResolver
         return match ($sourceType) {
             'field' => $this->resolveFieldValue((string) ($valueDefinition['sourceField'] ?? ''), $context),
             'expression' => $this->resolveExpressionValue((string) ($valueDefinition['expression'] ?? ''), $context),
-            default => $valueDefinition['value'] ?? $valueDefinition['constantValue'] ?? null,
+            default => $this->resolveConstantValue(
+                $valueDefinition['value'] ?? $valueDefinition['constantValue'] ?? null,
+                $context
+            ),
         };
     }
 
@@ -140,6 +143,40 @@ class WorkflowValueResolver
         }
 
         return $this->formulaManager->runSafe($expression, $this->resolveEntity($context), (object) []);
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function resolveConstantValue(mixed $value, array $context): mixed
+    {
+        if (!is_string($value)) {
+            return $value;
+        }
+
+        if (!str_contains($value, '${')) {
+            return $value;
+        }
+
+        return preg_replace_callback('/\$\{([^}]+)\}/', function (array $matches) use ($context): string {
+            $path = trim((string) ($matches[1] ?? ''));
+
+            if ($path === '') {
+                return '';
+            }
+
+            $resolved = $this->resolveFieldValue($path, $context);
+
+            if ($resolved === null) {
+                return '';
+            }
+
+            if (is_scalar($resolved)) {
+                return (string) $resolved;
+            }
+
+            return '';
+        }, $value) ?? $value;
     }
 
     /**
