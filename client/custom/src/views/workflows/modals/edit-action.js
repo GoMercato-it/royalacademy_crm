@@ -121,10 +121,17 @@ define('custom:views/workflows/modals/edit-action', [
                     };
 
                 case 'email.send_email':
+                case 'email.queue_email':
                     return {
                         toEmailConfig: this.normalizeValueConfig(payload.to || ''),
                         emailSubjectConfig: this.normalizeValueConfig(payload.subject || ''),
                         emailBodyConfig: this.normalizeValueConfig(payload.body || ''),
+                    };
+
+                case 'email.send_template':
+                    return {
+                        toEmailConfig: this.normalizeValueConfig(payload.to || ''),
+                        emailTemplateConfig: this.normalizeValueConfig(payload.templateId || payload.emailTemplateId || ''),
                     };
 
                 default:
@@ -236,6 +243,10 @@ define('custom:views/workflows/modals/edit-action', [
                         view: 'custom:views/workflows/fields/value-config'
                     },
                     emailBodyConfig: {
+                        type: 'base',
+                        view: 'custom:views/workflows/fields/value-config'
+                    },
+                    emailTemplateConfig: {
                         type: 'base',
                         view: 'custom:views/workflows/fields/value-config'
                     }
@@ -488,6 +499,7 @@ define('custom:views/workflows/modals/edit-action', [
                     ];
 
                 case 'email.send_email':
+                case 'email.queue_email':
                     return [
                         {
                             rows: [
@@ -521,6 +533,43 @@ define('custom:views/workflows/modals/edit-action', [
                                             sourceEntityType: this.workflowEntityType,
                                             valueType: 'text',
                                             headerText: this.translate('Email Body', 'fields', 'WorkflowDefinition')
+                                        }
+                                    }
+                                ]
+                            ]
+                        }
+                    ];
+
+                case 'email.send_template':
+                    return [
+                        {
+                            rows: [
+                                [
+                                    {
+                                        name: 'toEmailConfig',
+                                        labelText: this.translate('To Email', 'fields', 'WorkflowDefinition'),
+                                        options: {
+                                            sourceEntityType: this.workflowEntityType,
+                                            valueType: 'email',
+                                            headerText: this.translate('To Email', 'fields', 'WorkflowDefinition')
+                                        }
+                                    }
+                                ],
+                                [
+                                    {
+                                        name: 'emailTemplateConfig',
+                                        labelText: this.translate('emailTemplate', 'fields', 'WorkflowDefinition'),
+                                        options: {
+                                            sourceEntityType: this.workflowEntityType,
+                                            fieldDefs: {
+                                                type: 'link',
+                                                view: 'views/fields/link',
+                                                entityType: 'EmailTemplate',
+                                                params: {
+                                                    entity: 'EmailTemplate'
+                                                }
+                                            },
+                                            headerText: this.translate('emailTemplate', 'fields', 'WorkflowDefinition')
                                         }
                                     }
                                 ]
@@ -597,10 +646,17 @@ define('custom:views/workflows/modals/edit-action', [
                     };
 
                 case 'email.send_email':
+                case 'email.queue_email':
                     return {
                         to: this.model.get('toEmailConfig') || '',
                         subject: this.model.get('emailSubjectConfig') || '',
                         body: this.model.get('emailBodyConfig') || '',
+                    };
+
+                case 'email.send_template':
+                    return {
+                        to: this.model.get('toEmailConfig') || '',
+                        templateId: this.model.get('emailTemplateConfig') || '',
                     };
 
                 default:

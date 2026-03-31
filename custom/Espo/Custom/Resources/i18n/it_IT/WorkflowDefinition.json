@@ -17,6 +17,7 @@
         "waId": "WhatsApp ID",
         "messageBody": "Testo messaggio",
         "toEmail": "Email destinatario",
+        "emailTemplate": "Template email",
         "emailSubject": "Oggetto",
         "emailBody": "Corpo email",
         "fieldAssignments": "Campi",

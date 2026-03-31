@@ -154,6 +154,22 @@ class WorkflowValueResolver
      */
     private function resolveConstantValue(mixed $value, array $context): mixed
     {
+        if (is_array($value) && !array_is_list($value)) {
+            if (array_key_exists('id', $value)) {
+                $id = $value['id'] ?? null;
+
+                if (is_scalar($id) && trim((string) $id) !== '') {
+                    return (string) $id;
+                }
+
+                $name = $value['name'] ?? null;
+
+                if (is_scalar($name) && trim((string) $name) !== '') {
+                    return (string) $name;
+                }
+            }
+        }
+
         if (!is_string($value)) {
             return $value;
         }

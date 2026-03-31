@@ -40,7 +40,9 @@ define('custom:views/workflows/modals/edit-value-config', [
             model.name = 'WorkflowValueConfig';
             model.set({
                 sourceType: this.valueConfig.sourceType,
-                constantValue: this.valueConfig.value,
+                constantValue: this.getInitialConstantValue(),
+                constantValueId: this.getInitialConstantValueId(),
+                constantValueName: this.getInitialConstantValueName(),
                 sourceField: this.valueConfig.sourceField,
                 expression: this.valueConfig.expression,
             });
@@ -64,9 +66,21 @@ define('custom:views/workflows/modals/edit-value-config', [
 
             recordView.processFetch();
 
+            let constantValue = this.model.has('constantValue') ? this.model.get('constantValue') : '';
+
+            if (this.model.get('sourceType') === 'constant' && this.isLinkConstantField()) {
+                const constantValueId = this.model.get('constantValueId') || '';
+                const constantValueName = this.model.get('constantValueName') || '';
+
+                constantValue = constantValueId || constantValueName ? {
+                    id: constantValueId,
+                    name: constantValueName,
+                } : '';
+            }
+
             this.trigger('apply', {
                 sourceType: this.model.get('sourceType') || 'constant',
-                value: this.model.has('constantValue') ? this.model.get('constantValue') : '',
+                value: constantValue,
                 sourceField: this.model.get('sourceField') || '',
                 expression: this.model.get('expression') || '',
             });
@@ -247,6 +261,34 @@ define('custom:views/workflows/modals/edit-value-config', [
             return {
                 type: 'varchar'
             };
+        }
+
+        isLinkConstantField() {
+            return (this.constantFieldDefs?.type || '') === 'link';
+        }
+
+        getInitialConstantValue() {
+            if (this.isLinkConstantField()) {
+                return this.valueConfig.value?.name || '';
+            }
+
+            return this.valueConfig.value;
+        }
+
+        getInitialConstantValueId() {
+            if (!this.isLinkConstantField()) {
+                return '';
+            }
+
+            return this.valueConfig.value?.id || '';
+        }
+
+        getInitialConstantValueName() {
+            if (!this.isLinkConstantField()) {
+                return '';
+            }
+
+            return this.valueConfig.value?.name || '';
         }
 
         getSourceFieldOptionList() {

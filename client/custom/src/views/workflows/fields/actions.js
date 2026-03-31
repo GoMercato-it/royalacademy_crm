@@ -257,11 +257,19 @@ define('custom:views/workflows/fields/actions', [
                     return `${waId}${body ? ' | ' + body : ''}`;
                 }
 
-                case 'email.send_email': {
+                case 'email.send_email':
+                case 'email.queue_email': {
                     const to = this.summarizeValueConfig(payload.to) || this.translate('None');
                     const subject = this.summarizeValueConfig(payload.subject) || '';
 
                     return `${to}${subject ? ' | ' + subject : ''}`;
+                }
+
+                case 'email.send_template': {
+                    const to = this.summarizeValueConfig(payload.to) || this.translate('None');
+                    const template = this.summarizeValueConfig(payload.templateId || payload.emailTemplateId) || this.translate('None');
+
+                    return `${template} | ${to}`;
                 }
 
                 default:
@@ -304,6 +312,10 @@ define('custom:views/workflows/fields/actions', [
 
             if (sourceType === 'expression') {
                 return `${this.translate('Expression', 'fields', 'WorkflowDefinition')}: ${value.expression || ''}`;
+            }
+
+            if (value.value && typeof value.value === 'object' && !Array.isArray(value.value)) {
+                return value.value.name || value.value.id || '';
             }
 
             return value.value || '';
@@ -391,10 +403,17 @@ define('custom:views/workflows/fields/actions', [
                     };
 
                 case 'email.send_email':
+                case 'email.queue_email':
                     return {
                         to: '',
                         subject: '',
                         body: '',
+                    };
+
+                case 'email.send_template':
+                    return {
+                        to: '',
+                        templateId: '',
                     };
 
                 default:
@@ -432,8 +451,13 @@ define('custom:views/workflows/fields/actions', [
                         this.hasMeaningfulValue(payload.body || payload.message);
 
                 case 'email.send_email':
+                case 'email.queue_email':
                     return this.hasMeaningfulValue(payload.to) &&
                         this.hasMeaningfulValue(payload.subject);
+
+                case 'email.send_template':
+                    return this.hasMeaningfulValue(payload.to) &&
+                        this.hasMeaningfulValue(payload.templateId || payload.emailTemplateId);
 
                 default:
                     return Object.keys(payload).length > 0;
@@ -457,6 +481,10 @@ define('custom:views/workflows/fields/actions', [
 
             if (sourceType === 'expression') {
                 return !!value.expression;
+            }
+
+            if (value.value && typeof value.value === 'object' && !Array.isArray(value.value)) {
+                return !!(value.value.id || value.value.name);
             }
 
             return value.value !== '' && value.value !== null && value.value !== undefined;

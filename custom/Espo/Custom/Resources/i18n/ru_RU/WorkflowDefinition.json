@@ -17,6 +17,7 @@
         "waId": "WhatsApp ID",
         "messageBody": "Текст сообщения",
         "toEmail": "Email получателя",
+        "emailTemplate": "Шаблон письма",
         "emailSubject": "Тема",
         "emailBody": "Тело письма",
         "fieldAssignments": "Поля",

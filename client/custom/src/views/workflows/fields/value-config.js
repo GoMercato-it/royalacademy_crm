@@ -119,6 +119,10 @@ define('custom:views/workflows/fields/value-config', [
                 return this.translate('None');
             }
 
+            if (value && typeof value === 'object' && !Array.isArray(value)) {
+                return value.name || value.id || this.translate('None');
+            }
+
             if (this.valueType === 'bool') {
                 return value ? this.translate('Yes') : this.translate('No');
             }
