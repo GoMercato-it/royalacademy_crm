@@ -1,7 +1,8 @@
 define('custom:views/workflows/modals/edit-field-map-item', [
     'views/modal',
-    'model'
-], function (ModalView, Model) {
+    'model',
+    'custom:workflows/field-catalog'
+], function (ModalView, Model, FieldCatalog) {
 
     return class extends ModalView {
 
@@ -14,6 +15,7 @@ define('custom:views/workflows/modals/edit-field-map-item', [
             this.entityType = this.options.entityType;
             this.sourceEntityType = this.options.sourceEntityType || '';
             this.item = this.options.item || {};
+            this.fieldCatalog = new FieldCatalog(this);
 
             this.headerText = this.translate('Field Value', 'labels', 'WorkflowDefinition');
             this.buttonList = [
@@ -195,191 +197,28 @@ define('custom:views/workflows/modals/edit-field-map-item', [
         }
 
         getFieldOptionList() {
-            const fields = this.getMetadata().get(['entityDefs', this.entityType, 'fields']) || {};
-
-            return Object.keys(fields).filter(name => {
-                const defs = fields[name] || {};
-                const type = defs.type || '';
-
-                if (defs.readOnly || defs.notStorable) {
-                    return false;
-                }
-
-                if ([
-                    'link',
-                    'linkParent',
-                    'linkMultiple',
-                    'file',
-                    'image',
-                    'jsonObject',
-                    'jsonArray',
-                    'base',
-                    'foreign',
-                    'foreignId',
-                    'foreignArray',
-                    'map'
-                ].includes(type)) {
-                    return false;
-                }
-
-                return true;
-            }).sort((a, b) => {
-                const aLabel = this.translate(a, 'fields', this.entityType) || a;
-                const bLabel = this.translate(b, 'fields', this.entityType) || b;
-
-                return aLabel.localeCompare(bLabel);
-            });
+            return this.fieldCatalog.getTargetFieldOptionList(this.entityType);
         }
 
         getTranslatedFieldOptions() {
-            const translated = {};
-
-            this.getFieldOptionList().forEach(name => {
-                translated[name] = this.translate(name, 'fields', this.entityType) || name;
-            });
-
-            return translated;
+            return this.fieldCatalog.getTranslatedTargetFieldOptions(this.entityType);
         }
 
         getSourceFieldOptionList() {
-            if (!this.sourceEntityType) {
-                return [];
-            }
-
-            const attributeList = this.getFieldManager().getEntityTypeAttributeList(this.sourceEntityType)
-                .concat(['id'])
-                .sort();
-            const links = this.getMetadata().get(['entityDefs', this.sourceEntityType, 'links']) || {};
-            const linkList = [];
-
-            Object.keys(links).forEach(link => {
-                const type = links[link].type;
-
-                if (!type) {
-                    return;
-                }
-
-                if (['belongsToParent', 'hasOne', 'belongsTo'].includes(type)) {
-                    linkList.push(link);
-                }
-            });
-
-            linkList.sort();
-
-            linkList.forEach(link => {
-                const scope = links[link].entity;
-
-                if (!scope || links[link].disabled) {
-                    return;
-                }
-
-                this.getFieldManager().getEntityTypeAttributeList(scope)
-                    .sort()
-                    .forEach(item => attributeList.push(`${link}.${item}`));
-
-                attributeList.push(`${link}.id`);
-            });
-
-            return [...new Set(attributeList)];
+            return this.fieldCatalog.getSourceFieldOptionList(this.sourceEntityType);
         }
 
         getTranslatedSourceFieldOptions() {
-            const translated = {};
-
-            this.getSourceFieldOptionList().forEach(name => {
-                translated[name] = this.translateSourceField(name);
-            });
-
-            return translated;
+            return this.fieldCatalog.getTranslatedSourceFieldOptions(this.sourceEntityType);
         }
 
         translateSourceField(name) {
-            if (!name.includes('.')) {
-                return this.translate(name, 'fields', this.sourceEntityType) || name;
-            }
-
-            const [link, attribute] = name.split('.', 2);
-            const linkDefs = this.getMetadata().get(['entityDefs', this.sourceEntityType, 'links', link]) || {};
-            const relatedEntityType = linkDefs.entity || '';
-            const linkLabel = this.translate(link, 'links', this.sourceEntityType) ||
-                this.translate(link, 'fields', this.sourceEntityType) ||
-                link;
-            const attributeLabel = this.translate(attribute, 'fields', relatedEntityType) || attribute;
-
-            return `${linkLabel} > ${attributeLabel}`;
+            return this.fieldCatalog.translateSourceField(this.sourceEntityType, name);
         }
 
         getConstantValueFieldDefs() {
             const field = this.model.get('field') || '';
-            const allDefs = this.getMetadata().get(['entityDefs', this.entityType, 'fields']) || {};
-            const fieldDefs = field ? (allDefs[field] || {}) : {};
-            const type = fieldDefs.type || 'varchar';
-
-            if (type === 'enum') {
-                return {
-                    type: 'enum',
-                    options: fieldDefs.options || [],
-                    translatedOptions: this.getTranslatedTargetFieldOptions(field, fieldDefs.options || [])
-                };
-            }
-
-            if (type === 'multiEnum' || type === 'checklist') {
-                return {
-                    type: type,
-                    options: fieldDefs.options || [],
-                    translatedOptions: this.getTranslatedTargetFieldOptions(field, fieldDefs.options || [])
-                };
-            }
-
-            if (type === 'bool') {
-                return {
-                    type: 'bool'
-                };
-            }
-
-            if (type === 'date') {
-                return {
-                    type: 'date'
-                };
-            }
-
-            if (type === 'datetime' || type === 'datetimeOptional') {
-                return {
-                    type: type
-                };
-            }
-
-            if (type === 'int' || type === 'enumInt') {
-                return {
-                    type: 'int'
-                };
-            }
-
-            if (type === 'float' || type === 'currency' || type === 'number' || type === 'enumFloat') {
-                return {
-                    type: 'float'
-                };
-            }
-
-            if (type === 'text' || type === 'wysiwyg') {
-                return {
-                    type: 'text'
-                };
-            }
-
-            return {
-                type: 'varchar'
-            };
-        }
-
-        getTranslatedTargetFieldOptions(field, options) {
-            const translated = {};
-
-            options.forEach(option => {
-                translated[option] = this.getLanguage().translateOption(option, field, this.entityType) || option;
-            });
-
-            return translated;
+            return this.fieldCatalog.getTargetValueFieldDefs(this.entityType, field);
         }
     };
 });

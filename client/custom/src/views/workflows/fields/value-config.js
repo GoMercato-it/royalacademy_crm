@@ -1,6 +1,7 @@
 define('custom:views/workflows/fields/value-config', [
-    'views/fields/base'
-], function (BaseView) {
+    'views/fields/base',
+    'custom:workflows/field-catalog'
+], function (BaseView, FieldCatalog) {
 
     return class extends BaseView {
 
@@ -29,6 +30,7 @@ define('custom:views/workflows/fields/value-config', [
             this.valueOptions = this.options.valueOptions || this.params.valueOptions || [];
             this.translatedValueOptions = this.options.translatedValueOptions || this.params.translatedValueOptions || {};
             this.headerText = this.options.headerText || this.params.headerText || this.translate(this.name, 'fields', 'WorkflowDefinition');
+            this.fieldCatalog = new FieldCatalog(this);
 
             this.valueConfig = this.normalizeValueConfig(this.model.get(this.name));
 
@@ -131,23 +133,7 @@ define('custom:views/workflows/fields/value-config', [
         }
 
         translateSourceField(name) {
-            if (!name) {
-                return '';
-            }
-
-            if (!name.includes('.')) {
-                return this.translate(name, 'fields', this.sourceEntityType) || name;
-            }
-
-            const [link, attribute] = name.split('.', 2);
-            const linkDefs = this.getMetadata().get(['entityDefs', this.sourceEntityType, 'links', link]) || {};
-            const relatedEntityType = linkDefs.entity || '';
-            const linkLabel = this.translate(link, 'links', this.sourceEntityType) ||
-                this.translate(link, 'fields', this.sourceEntityType) ||
-                link;
-            const attributeLabel = this.translate(attribute, 'fields', relatedEntityType) || attribute;
-
-            return `${linkLabel} > ${attributeLabel}`;
+            return this.fieldCatalog.translateSourceField(this.sourceEntityType, name);
         }
     };
 });

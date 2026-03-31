@@ -1,7 +1,8 @@
 define('custom:views/workflows/modals/edit-value-config', [
     'views/modal',
-    'model'
-], function (ModalView, Model) {
+    'model',
+    'custom:workflows/field-catalog'
+], function (ModalView, Model, FieldCatalog) {
 
     return class extends ModalView {
 
@@ -17,6 +18,7 @@ define('custom:views/workflows/modals/edit-value-config', [
             this.translatedValueOptions = this.options.translatedValueOptions || {};
             this.headerText = this.options.headerText || this.translate('Value', 'fields', 'WorkflowDefinition');
             this.valueConfig = this.normalizeValueConfig(this.options.valueConfig);
+            this.fieldCatalog = new FieldCatalog(this);
 
             this.buttonList = [
                 {
@@ -243,67 +245,15 @@ define('custom:views/workflows/modals/edit-value-config', [
         }
 
         getSourceFieldOptionList() {
-            if (!this.sourceEntityType) {
-                return [];
-            }
-
-            const attributeList = this.getFieldManager().getEntityTypeAttributeList(this.sourceEntityType)
-                .concat(['id'])
-                .sort();
-            const links = this.getMetadata().get(['entityDefs', this.sourceEntityType, 'links']) || {};
-            const linkList = [];
-
-            Object.keys(links).forEach(link => {
-                const type = links[link].type;
-
-                if (type && ['belongsToParent', 'hasOne', 'belongsTo'].includes(type)) {
-                    linkList.push(link);
-                }
-            });
-
-            linkList.sort();
-
-            linkList.forEach(link => {
-                const scope = links[link].entity;
-
-                if (!scope || links[link].disabled) {
-                    return;
-                }
-
-                this.getFieldManager().getEntityTypeAttributeList(scope)
-                    .sort()
-                    .forEach(item => attributeList.push(`${link}.${item}`));
-
-                attributeList.push(`${link}.id`);
-            });
-
-            return [...new Set(attributeList)];
+            return this.fieldCatalog.getSourceFieldOptionList(this.sourceEntityType);
         }
 
         getTranslatedSourceFieldOptions() {
-            const translated = {};
-
-            this.getSourceFieldOptionList().forEach(name => {
-                translated[name] = this.translateSourceField(name);
-            });
-
-            return translated;
+            return this.fieldCatalog.getTranslatedSourceFieldOptions(this.sourceEntityType);
         }
 
         translateSourceField(name) {
-            if (!name.includes('.')) {
-                return this.translate(name, 'fields', this.sourceEntityType) || name;
-            }
-
-            const [link, attribute] = name.split('.', 2);
-            const linkDefs = this.getMetadata().get(['entityDefs', this.sourceEntityType, 'links', link]) || {};
-            const relatedEntityType = linkDefs.entity || '';
-            const linkLabel = this.translate(link, 'links', this.sourceEntityType) ||
-                this.translate(link, 'fields', this.sourceEntityType) ||
-                link;
-            const attributeLabel = this.translate(attribute, 'fields', relatedEntityType) || attribute;
-
-            return `${linkLabel} > ${attributeLabel}`;
+            return this.fieldCatalog.translateSourceField(this.sourceEntityType, name);
         }
     };
 });

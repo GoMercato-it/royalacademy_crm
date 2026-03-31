@@ -1,6 +1,7 @@
 define('custom:views/workflows/fields/action-field-map', [
-    'views/fields/base'
-], function (BaseView) {
+    'views/fields/base',
+    'custom:workflows/field-catalog'
+], function (BaseView, FieldCatalog) {
 
     return class extends BaseView {
 
@@ -69,6 +70,7 @@ define('custom:views/workflows/fields/action-field-map', [
             super.setup();
 
             this.sourceEntityType = this.options.sourceEntityType || this.params.sourceEntityType || '';
+            this.fieldCatalog = new FieldCatalog(this);
 
             this.addActionHandler('addItem', () => this.addItem());
             this.addActionHandler('editItem', (e, target) => this.editItem(parseInt(target.dataset.index)));
@@ -159,13 +161,14 @@ define('custom:views/workflows/fields/action-field-map', [
 
             return this.itemList.map((item, index) => ({
                 index: index,
-                fieldLabel: this.translate(item.field || '', 'fields', entityType) || item.field || '',
+                fieldLabel: this.fieldCatalog.getTargetFieldLabel(entityType, item.field || ''),
                 valueLabel: this.getValueLabel(item),
             }));
         }
 
         getValueLabel(item) {
             const sourceType = (item.sourceType || (item.expression ? 'expression' : item.sourceField ? 'field' : 'constant')).toString();
+            const entityType = this.model.get('targetEntityType');
 
             if (sourceType === 'field') {
                 const sourceField = item.sourceField || '';
@@ -178,27 +181,11 @@ define('custom:views/workflows/fields/action-field-map', [
                 return `${this.translate('Expression', 'fields', 'WorkflowDefinition')}: ${item.expression || ''}`;
             }
 
-            return item.value || '';
+            return this.fieldCatalog.formatTargetValue(entityType, item.field || '', item.value);
         }
 
         getSourceFieldLabel(field) {
-            if (!field) {
-                return '';
-            }
-
-            const sourceEntityType = this.sourceEntityType || '';
-
-            if (!sourceEntityType || !field.includes('.')) {
-                return this.translate(field, 'fields', sourceEntityType) || field;
-            }
-
-            const [link, attribute] = field.split('.', 2);
-            const linkDefs = this.getMetadata().get(['entityDefs', sourceEntityType, 'links', link]) || {};
-            const relatedEntityType = linkDefs.entity || '';
-            const linkLabel = this.translate(link, 'links', sourceEntityType) || this.translate(link, 'fields', sourceEntityType) || link;
-            const attributeLabel = this.translate(attribute, 'fields', relatedEntityType) || attribute;
-
-            return `${linkLabel} > ${attributeLabel}`;
+            return this.fieldCatalog.translateSourceField(this.sourceEntityType, field);
         }
     };
 });
