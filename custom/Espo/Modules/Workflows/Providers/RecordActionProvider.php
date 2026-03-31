@@ -3,6 +3,8 @@
 namespace Espo\Modules\Workflows\Providers;
 
 use Espo\Core\ORM\Repository\Option\SaveContext;
+use Espo\Core\ORM\Repository\Option\SaveOption;
+use Espo\Core\Utils\SystemUser;
 use Espo\ORM\Entity;
 use Espo\ORM\EntityManager;
 use Espo\Modules\Workflows\Contracts\WorkflowActionProvider;
@@ -13,7 +15,8 @@ class RecordActionProvider implements WorkflowActionProvider
 {
     public function __construct(
         private EntityManager $entityManager,
-        private WorkflowStreamAnnotationService $workflowStreamAnnotationService
+        private WorkflowStreamAnnotationService $workflowStreamAnnotationService,
+        private SystemUser $systemUser
     ) {
     }
 
@@ -46,7 +49,7 @@ class RecordActionProvider implements WorkflowActionProvider
     private function executeCreateRecord(array $payload, array $context): array
     {
         $entityType = (string) ($payload['entityType'] ?? $payload['scope'] ?? '');
-        $attributes = (array) ($payload['attributes'] ?? $payload['data'] ?? []);
+        $attributes = $this->normalizeAttributes($payload['attributes'] ?? $payload['data'] ?? []);
 
         if ($entityType === '') {
             throw new RuntimeException('entityType is required for record create_record');
@@ -68,6 +71,8 @@ class RecordActionProvider implements WorkflowActionProvider
         );
 
         $this->entityManager->saveEntity($entity, [
+            ...$this->getWorkflowSaveOptions(true),
+            'skipWorkflows' => true,
             SaveContext::NAME => $saveContext,
         ]);
 
@@ -82,7 +87,7 @@ class RecordActionProvider implements WorkflowActionProvider
     {
         $entityType = (string) ($payload['entityType'] ?? $payload['scope'] ?? '');
         $id = (string) ($payload['id'] ?? $payload['recordId'] ?? '');
-        $attributes = (array) ($payload['attributes'] ?? $payload['data'] ?? []);
+        $attributes = $this->normalizeAttributes($payload['attributes'] ?? $payload['data'] ?? []);
 
         if ($entityType === '' || $id === '') {
             throw new RuntimeException('entityType and id are required for record update_record');
@@ -108,6 +113,8 @@ class RecordActionProvider implements WorkflowActionProvider
         );
 
         $this->entityManager->saveEntity($entity, [
+            ...$this->getWorkflowSaveOptions(false),
+            'skipWorkflows' => true,
             SaveContext::NAME => $saveContext,
         ]);
 
@@ -155,6 +162,24 @@ class RecordActionProvider implements WorkflowActionProvider
         return $saveContext;
     }
 
+    /**
+     * @return array<string, string>
+     */
+    private function getWorkflowSaveOptions(bool $isCreate): array
+    {
+        $systemUserId = $this->systemUser->getId();
+
+        $options = [
+            SaveOption::MODIFIED_BY_ID => $systemUserId,
+        ];
+
+        if ($isCreate) {
+            $options[SaveOption::CREATED_BY_ID] = $systemUserId;
+        }
+
+        return $options;
+    }
+
     private function normalizeAction(string $action): string
     {
         $value = trim($action);
@@ -167,5 +192,37 @@ class RecordActionProvider implements WorkflowActionProvider
         $value = strtolower((string) $value);
 
         return str_replace(['-', ' '], '_', $value);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizeAttributes(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        if (!array_is_list($value)) {
+            return $value;
+        }
+
+        $attributes = [];
+
+        foreach ($value as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $field = trim((string) ($item['field'] ?? ''));
+
+            if ($field === '') {
+                continue;
+            }
+
+            $attributes[$field] = $item['value'] ?? null;
+        }
+
+        return $attributes;
     }
 }

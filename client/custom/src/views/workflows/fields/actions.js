@@ -73,7 +73,11 @@ define('custom:views/workflows/fields/actions', [
             this.addActionHandler('removeAction', (e, target) => this.removeAction(parseInt(target.dataset.index)));
 
             this.actionConfigList = this.normalizeActionConfigList(this.model.get(this.name));
-            this.availableActionList = this.params.options || [];
+            this.availableActionList =
+                this.params.options ||
+                this.options.options ||
+                this.getMetadata().get(['entityDefs', this.model.entityType, 'fields', this.name, 'options']) ||
+                [];
         }
 
         data() {
