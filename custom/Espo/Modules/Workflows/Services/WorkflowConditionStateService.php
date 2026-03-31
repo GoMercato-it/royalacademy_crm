@@ -83,7 +83,7 @@ class WorkflowConditionStateService
 
         return [
             'mode' => $mode,
-            'previousState' => $stateEntity->getFetched('lastConditionState') ?? $previousState,
+            'previousState' => $previousState,
             'currentState' => $conditionPassed,
             'shouldExecute' => $shouldExecute,
             'reason' => $reason,

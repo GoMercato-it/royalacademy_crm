@@ -157,12 +157,13 @@ class WorkflowTrigger implements AfterSave
      */
     private function buildContext(CoreEntity $entity): array
     {
-        $attributes = get_object_vars($entity->getValueMap());
+        $contextEntity = $this->entityManager->getEntityById($entity->getEntityType(), $entity->getId()) ?? $entity;
+        $attributes = get_object_vars($contextEntity->getValueMap());
 
         return [
-            'entity' => $entity,
-            'entityType' => $entity->getEntityType(),
-            'entityId' => $entity->getId(),
+            'entity' => $contextEntity,
+            'entityType' => $contextEntity->getEntityType(),
+            'entityId' => $contextEntity->getId(),
             'attributes' => $attributes,
         ];
     }

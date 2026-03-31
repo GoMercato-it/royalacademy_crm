@@ -218,6 +218,19 @@ class RecordActionProvider implements WorkflowActionProvider
             return $value;
         }
 
+        foreach ($value as $item) {
+            if (
+                is_array($item) &&
+                (
+                    array_key_exists('sourceType', $item) ||
+                    array_key_exists('sourceField', $item) ||
+                    array_key_exists('expression', $item)
+                )
+            ) {
+                return array_values(array_filter($value, fn ($it) => is_array($it)));
+            }
+        }
+
         $attributes = [];
 
         foreach ($value as $item) {
