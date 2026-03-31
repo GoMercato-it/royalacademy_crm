@@ -22,6 +22,11 @@ class EnsureScheduledJobs implements Command
             'job' => 'ImportLeadsFromCsv',
             'scheduling' => '* * * * *',
         ],
+        [
+            'name' => 'Run Workflow Pending Jobs',
+            'job' => 'RunWorkflowPendingJobs',
+            'scheduling' => '* * * * *',
+        ],
     ];
 
     public function __construct(

@@ -22,7 +22,10 @@ class WorkflowActionExecutor
             }
 
             $providerName = (string) ($actionConfig['provider'] ?? '');
-            $actionName = (string) ($actionConfig['action'] ?? '');
+            $actionName = $this->normalizeActionName(
+                $providerName,
+                (string) ($actionConfig['action'] ?? '')
+            );
             $payload = (array) ($actionConfig['payload'] ?? []);
 
             $provider = $this->workflowActionRegistry->getProvider($providerName);
@@ -50,5 +53,23 @@ class WorkflowActionExecutor
             'action' => $parts[1] ?? $normalized,
             'payload' => [],
         ];
+    }
+
+    private function normalizeActionName(string $providerName, string $actionName): string
+    {
+        $providerName = trim($providerName);
+        $actionName = trim($actionName);
+
+        if ($providerName === '' || $actionName === '') {
+            return $actionName;
+        }
+
+        $prefix = $providerName . '.';
+
+        if (str_starts_with($actionName, $prefix)) {
+            return substr($actionName, strlen($prefix));
+        }
+
+        return $actionName;
     }
 }

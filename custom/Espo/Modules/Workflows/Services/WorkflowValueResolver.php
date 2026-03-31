@@ -120,13 +120,17 @@ class WorkflowValueResolver
             return null;
         }
 
+        $attributes = $this->extractAttributes($context);
+
+        if (array_key_exists($path, $attributes)) {
+            return $attributes[$path];
+        }
+
         $entity = $this->resolveEntity($context);
 
         if ($entity) {
             return $this->attributeFetcher->fetch($entity, $path);
         }
-
-        $attributes = $this->extractAttributes($context);
 
         return $attributes[$path] ?? null;
     }
@@ -212,8 +216,12 @@ class WorkflowValueResolver
      */
     private function extractAttributes(array $context): array
     {
-        if (isset($context['attributes']) && is_array($context['attributes'])) {
-            return $context['attributes'];
+        if (array_key_exists('attributes', $context)) {
+            $attributes = $this->normalizeArray($context['attributes']);
+
+            if ($attributes !== []) {
+                return $attributes;
+            }
         }
 
         $attributes = [];
@@ -232,5 +240,23 @@ class WorkflowValueResolver
         }
 
         return $attributes;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function normalizeArray(mixed $value): array
+    {
+        if (is_array($value)) {
+            return $value;
+        }
+
+        if (is_object($value)) {
+            $normalized = json_decode(json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
+
+            return is_array($normalized) ? $normalized : [];
+        }
+
+        return [];
     }
 }

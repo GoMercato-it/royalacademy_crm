@@ -51,12 +51,59 @@ class WorkflowExecutionService
         $this->saveInternal($execution);
     }
 
+    /**
+     * @param array<string, mixed> $definition
+     * @param array<string, mixed> $context
+     */
+    public function queue(array $definition, string $triggerType, array $context = []): Entity
+    {
+        $execution = $this->entityManager->getNewEntity('WorkflowExecution');
+        $execution->set([
+            'workflowDefinitionId' => (string) ($definition['id'] ?? ''),
+            'status' => 'pending',
+            'triggerType' => $triggerType,
+            'relatedEntityType' => (string) ($context['entityType'] ?? $context['workflowEntityType'] ?? ''),
+            'relatedEntityId' => (string) ($context['entityId'] ?? ''),
+            'contextData' => $this->sanitizeValue($context),
+            'startedAt' => null,
+            'finishedAt' => null,
+            'errorMessage' => null,
+        ]);
+
+        $this->saveInternal($execution);
+
+        return $execution;
+    }
+
+    public function markRunning(Entity $execution): void
+    {
+        $execution->set([
+            'status' => 'running',
+            'startedAt' => $execution->get('startedAt') ?: date('Y-m-d H:i:s'),
+            'finishedAt' => null,
+            'errorMessage' => null,
+        ]);
+
+        $this->saveInternal($execution);
+    }
+
     public function fail(Entity $execution, Throwable|string $error): void
     {
         $message = $error instanceof Throwable ? $error->getMessage() : (string) $error;
 
         $execution->set([
             'status' => 'failed',
+            'finishedAt' => date('Y-m-d H:i:s'),
+            'errorMessage' => $message,
+        ]);
+
+        $this->saveInternal($execution);
+    }
+
+    public function cancel(Entity $execution, string $message): void
+    {
+        $execution->set([
+            'status' => 'cancelled',
             'finishedAt' => date('Y-m-d H:i:s'),
             'errorMessage' => $message,
         ]);

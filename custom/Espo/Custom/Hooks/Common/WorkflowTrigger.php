@@ -8,9 +8,10 @@ use Espo\Core\ORM\Repository\Option\SaveOption;
 use Espo\ORM\Entity;
 use Espo\ORM\EntityManager;
 use Espo\ORM\Repository\Option\SaveOptions;
+use Espo\Modules\Workflows\Services\WorkflowDefinitionService;
 use Espo\Modules\Workflows\Services\WorkflowExecutionService;
-use Espo\Modules\Workflows\Services\WorkflowRunner;
-use Throwable;
+use Espo\Modules\Workflows\Services\WorkflowExecutionRunnerService;
+use Espo\Modules\Workflows\Services\WorkflowPendingJobService;
 
 /**
  * @implements AfterSave<Entity>
@@ -33,9 +34,10 @@ class WorkflowTrigger implements AfterSave
 
     public function __construct(
         private EntityManager $entityManager,
-        private WorkflowRunner $workflowRunner,
+        private WorkflowDefinitionService $workflowDefinitionService,
         private WorkflowExecutionService $workflowExecutionService,
-        private \Espo\Modules\Workflows\Services\WorkflowConditionStateService $workflowConditionStateService
+        private WorkflowExecutionRunnerService $workflowExecutionRunnerService,
+        private WorkflowPendingJobService $workflowPendingJobService
     ) {
     }
 
@@ -60,95 +62,55 @@ class WorkflowTrigger implements AfterSave
         }
 
         $triggerType = $entity->isNew() ? 'record_created' : 'record_updated';
-        $definitionList = $this->entityManager
-            ->getRDBRepository('WorkflowDefinition')
-            ->where([
-                'status' => 'active',
-                'isEnabled' => true,
-                'triggerType' => $triggerType,
-                'entityType' => $entityType,
-            ])
-            ->find();
+        $definitionList = $this->workflowDefinitionService->findActiveByTrigger($triggerType, $entityType);
 
         if (!$definitionList->count()) {
             return;
         }
 
         $context = $this->buildContext($entity);
+        $executionContext = $this->buildExecutionContext($context);
 
         foreach ($definitionList as $definitionEntity) {
-            $definition = $this->buildDefinition($definitionEntity);
+            $definition = $this->workflowDefinitionService->toArray($definitionEntity);
+
+            if (($definition['executionMode'] ?? 'sync') === 'queued') {
+                $execution = $this->workflowExecutionService->queue(
+                    $definition,
+                    $triggerType,
+                    $executionContext
+                );
+
+                $this->workflowExecutionService->log(
+                    $execution->getId(),
+                    0,
+                    'system',
+                    'info',
+                    'Workflow execution queued.',
+                    [
+                        'workflowDefinitionId' => $definition['id'] ?? null,
+                        'workflowDefinitionName' => $definition['name'] ?? null,
+                        'triggerType' => $triggerType,
+                    ]
+                );
+
+                $this->workflowPendingJobService->queue(
+                    $execution,
+                    $definition,
+                    $triggerType,
+                    $executionContext
+                );
+
+                continue;
+            }
+
             $execution = $this->workflowExecutionService->start(
                 $definition,
                 $triggerType,
-                $this->buildExecutionContext($context)
+                $executionContext
             );
 
-            $this->workflowExecutionService->log(
-                $execution->getId(),
-                0,
-                'system',
-                'info',
-                'Workflow execution started.',
-                [
-                    'workflowDefinitionId' => $definition['id'] ?? null,
-                    'workflowDefinitionName' => $definition['name'] ?? null,
-                    'triggerType' => $triggerType,
-                ]
-            );
-
-            try {
-                $result = $this->workflowRunner->run($definition, $context);
-
-                if (($result['executed'] ?? false) === false) {
-                    $this->workflowExecutionService->log(
-                        $execution->getId(),
-                        1,
-                        'condition',
-                        'skipped',
-                        $this->resolveSkippedMessage((string) ($result['reason'] ?? 'conditions_not_met')),
-                        [
-                            'conditions' => $definition['conditions'] ?? [],
-                            'reason' => $result['reason'] ?? 'conditions_not_met',
-                            'conditionPassed' => $result['conditionPassed'] ?? null,
-                            'recurrence' => $result['recurrence'] ?? [],
-                        ]
-                    );
-                } else {
-                    foreach ((array) ($result['results'] ?? []) as $index => $item) {
-                        $this->workflowExecutionService->log(
-                            $execution->getId(),
-                            $index + 1,
-                            'action',
-                            'success',
-                            'Workflow action executed.',
-                            (array) ($item['result'] ?? []),
-                            (string) ($item['provider'] ?? ''),
-                            (string) ($item['action'] ?? '')
-                        );
-                    }
-
-                    $this->workflowConditionStateService->rememberExecution(
-                        (string) ($definition['id'] ?? ''),
-                        (string) ($context['entityType'] ?? ''),
-                        (string) ($context['entityId'] ?? ''),
-                        $execution->getId()
-                    );
-                }
-
-                $this->workflowExecutionService->complete($execution, $result);
-            } catch (Throwable $e) {
-                $this->workflowExecutionService->log(
-                    $execution->getId(),
-                    1,
-                    'system',
-                    'failed',
-                    'Workflow execution failed.',
-                    ['exception' => $e->getMessage()]
-                );
-
-                $this->workflowExecutionService->fail($execution, $e);
-            }
+            $this->workflowExecutionRunnerService->execute($execution, $definition, $triggerType, $context);
         }
     }
 
@@ -169,31 +131,6 @@ class WorkflowTrigger implements AfterSave
     }
 
     /**
-     * @return array<string, mixed>
-     */
-    private function buildDefinition(Entity $definitionEntity): array
-    {
-        return [
-            'id' => $definitionEntity->getId(),
-            'name' => (string) $definitionEntity->get('name'),
-            'status' => (string) $definitionEntity->get('status'),
-            'triggerType' => (string) $definitionEntity->get('triggerType'),
-            'entityType' => (string) $definitionEntity->get('entityType'),
-            'executionMode' => (string) $definitionEntity->get('executionMode'),
-            'updateRecurrenceMode' => (string) $definitionEntity->get('updateRecurrenceMode'),
-            'isEnabled' => (bool) $definitionEntity->get('isEnabled'),
-            'conditions' => $this->normalizeStructuredValue($definitionEntity->get('conditions')),
-            'actions' => $this->normalizeStructuredValue($definitionEntity->get('actions')),
-            'metadata' => $this->normalizeStructuredValue($definitionEntity->get('metadata')),
-        ];
-    }
-
-    private function normalizeStructuredValue(mixed $value): mixed
-    {
-        return json_decode(json_encode($value, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES), true);
-    }
-
-    /**
      * @param array<string, mixed> $context
      * @return array<string, mixed>
      */
@@ -203,13 +140,5 @@ class WorkflowTrigger implements AfterSave
         unset($result['entity']);
 
         return $result;
-    }
-
-    private function resolveSkippedMessage(string $reason): string
-    {
-        return match ($reason) {
-            'recurrence_not_met' => 'Workflow skipped by update recurrence mode.',
-            default => 'Workflow conditions not met.',
-        };
     }
 }

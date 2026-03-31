@@ -1,5 +1,8 @@
 {
     "ImportLeadsFromCsv": {
         "jobClassName": "Espo\\Custom\\Classes\\Jobs\\ImportLeadsFromCsv"
+    },
+    "RunWorkflowPendingJobs": {
+        "jobClassName": "Espo\\Custom\\Classes\\Jobs\\RunWorkflowPendingJobs"
     }
 }
