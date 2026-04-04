@@ -1,4 +1,4 @@
-define('custom:views/workflows/modals/edit-field-map-item', [
+define('custom:views/workflows/modals/edit-field-map-item-v3', [
     'views/modal',
     'model',
     'custom:workflows/field-catalog'
@@ -90,7 +90,7 @@ define('custom:views/workflows/modals/edit-field-map-item', [
                     },
                     valueConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config'
+                        view: 'custom:views/workflows/fields/value-config-v4'
                     }
                 }
             };

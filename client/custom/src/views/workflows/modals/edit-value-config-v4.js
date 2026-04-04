@@ -1,7 +1,8 @@
-define('custom:views/workflows/modals/edit-value-config', [
+define('custom:views/workflows/modals/edit-value-config-v4', [
     'views/modal',
-    'custom:workflows/field-catalog'
-], function (ModalView, FieldCatalog) {
+    'custom:workflows/field-catalog',
+    'model'
+], function (ModalView, FieldCatalog, Model) {
 
     return class extends ModalView {
 
@@ -27,6 +28,8 @@ define('custom:views/workflows/modals/edit-value-config', [
             this.headerText = this.options.headerText || this.translate('Value', 'fields', 'WorkflowDefinition');
             this.fieldCatalog = new FieldCatalog(this);
             this.state = this.normalizeValueConfig(this.options.valueConfig);
+            this.expressionModel = new Model();
+            this.expressionModel.set('expression', this.state.expression || '', {silent: true});
 
             this.buttonList = [
                 {
@@ -75,7 +78,15 @@ define('custom:views/workflows/modals/edit-value-config', [
                 return;
             }
 
+            if (this.hasView('expressionField')) {
+                this.clearView('expressionField');
+            }
+
             container.html(this.buildContentHtml());
+
+            if ((this.state.sourceType || 'constant') === 'expression') {
+                this.renderExpressionField();
+            }
         }
 
         buildContentHtml() {
@@ -146,9 +157,31 @@ define('custom:views/workflows/modals/edit-value-config', [
             return `
                 <div class="form-group">
                     <label class="control-label">${this.escapeHtml(this.translate('Expression', 'fields', 'WorkflowDefinition'))}</label>
-                    <textarea class="form-control" data-name="expression" rows="8">${this.escapeHtml(this.state.expression || '')}</textarea>
+                    <div class="workflow-expression-editor"></div>
                 </div>
             `;
+        }
+
+        renderExpressionField() {
+            const selector = '.workflow-expression-editor';
+
+            this.expressionModel.set('expression', this.state.expression || '', {silent: true});
+
+            this.createView('expressionField', 'views/fields/formula', {
+                selector: selector,
+                model: this.expressionModel,
+                name: 'expression',
+                mode: 'edit',
+                targetEntityType: this.sourceEntityType,
+                height: 240,
+                smallFont: true,
+                insertDisabled: false,
+                checkSyntaxDisabled: false,
+            }, view => {
+                if (this.isRendered()) {
+                    view.render();
+                }
+            });
         }
 
         getConstantInputHtml() {
@@ -248,7 +281,13 @@ define('custom:views/workflows/modals/edit-value-config', [
             }
 
             if (this.state.sourceType === 'expression') {
-                this.state.expression = this.$el.find('[data-name="expression"]').val() || '';
+                if (this.hasView('expressionField')) {
+                    const expressionField = this.getView('expressionField');
+
+                    expressionField.fetchToModel();
+                    this.state.expression = this.expressionModel.get('expression') || '';
+                }
+
                 return;
             }
 

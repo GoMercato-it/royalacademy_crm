@@ -1,4 +1,4 @@
-define('custom:views/workflows/fields/value-config', [
+define('custom:views/workflows/fields/value-config-v4', [
     'views/fields/base',
     'custom:workflows/field-catalog'
 ], function (BaseView, FieldCatalog) {
@@ -69,7 +69,7 @@ define('custom:views/workflows/fields/value-config', [
         editValue() {
             this.refreshDynamicFieldConfig();
 
-            this.createView('dialog', 'custom:views/workflows/modals/edit-value-config', {
+            this.createView('dialog', 'custom:views/workflows/modals/edit-value-config-v4', {
                 valueConfig: Espo.Utils.cloneDeep(this.valueConfig),
                 sourceEntityType: this.sourceEntityType,
                 valueType: this.valueType,

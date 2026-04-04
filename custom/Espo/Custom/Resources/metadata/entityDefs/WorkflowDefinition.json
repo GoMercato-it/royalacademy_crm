@@ -25,10 +25,7 @@
         "scheduling": {
             "type": "varchar",
             "view": "views/scheduled-job/fields/scheduling",
-            "tooltip": true,
-            "validatorClassNameList": [
-                "Espo\\Classes\\FieldValidators\\ScheduledJob\\Scheduling\\Valid"
-            ]
+            "tooltip": true
         },
         "executionMode": {
             "type": "enum",
@@ -50,7 +47,7 @@
         },
         "actions": {
             "type": "jsonArray",
-            "view": "custom:views/workflows/fields/actions",
+            "view": "custom:views/workflows/fields/actions-v3",
             "options": [
                 "record.create_record",
                 "record.create_task",

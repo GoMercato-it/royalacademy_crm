@@ -1,4 +1,4 @@
-define('custom:views/workflows/fields/actions', [
+define('custom:views/workflows/fields/actions-v3', [
     'views/fields/base'
 ], function (BaseView) {
 
@@ -145,7 +145,7 @@ define('custom:views/workflows/fields/actions', [
                 return;
             }
 
-            await this.createView('dialog', 'custom:views/workflows/modals/edit-action', {
+            await this.createView('dialog', 'custom:views/workflows/modals/edit-action-v3', {
                 actionConfig: Espo.Utils.cloneDeep(actionConfig),
                 translatedLabel: this.translateActionLabel(actionConfig),
                 workflowEntityType: this.model.get('entityType') || '',
