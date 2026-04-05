@@ -30,16 +30,19 @@ class MessageDispatchService
             ];
         }
 
-        $messageId = $this->extractMessageId($result['message']['id'] ?? $result['data']['id'] ?? null) ?: uniqid('sent_');
+        $messagePayload = $result['message'] ?? $result['data'] ?? [];
+        $messageId = $this->extractMessageId($messagePayload['id'] ?? null) ?: uniqid('sent_');
+        $timestamp = microtime(true);
         $storedMessage = $this->storeMessage([
             'body' => $message,
             'chatId' => $chatId,
             'fromMe' => true,
-            'timestamp' => time(),
+            'timestamp' => $timestamp,
             'status' => 'Sent',
             'messageId' => $messageId,
             'payloadMeta' => [
                 'source' => 'sendMessage',
+                'sortSequence' => (int) round(microtime(true) * 1000),
             ],
         ]);
 
@@ -55,7 +58,7 @@ class MessageDispatchService
 
     public function ingestApiMessages(string $chatId, array $apiMessages): void
     {
-        foreach ($apiMessages as $apiMessage) {
+        foreach (array_values($apiMessages) as $index => $apiMessage) {
             $messageId = $this->extractMessageId($apiMessage['id'] ?? $apiMessage['messageId'] ?? null);
 
             if (!$messageId) {
@@ -79,6 +82,7 @@ class MessageDispatchService
                     'payloadMeta' => [
                         'source' => 'getChatMessages',
                         'type' => $apiMessage['type'] ?? null,
+                        'sortSequence' => $index,
                     ],
                 ]);
             } catch (\PDOException $e) {
@@ -87,6 +91,23 @@ class MessageDispatchService
                 }
             }
         }
+    }
+
+    public function getLiveMessages(string $chatId, array $apiMessages): array
+    {
+        $result = [];
+
+        foreach (array_values($apiMessages) as $index => $apiMessage) {
+            $normalized = $this->normalizeApiMessageForBroadcast($chatId, $apiMessage, $index);
+
+            if ($normalized) {
+                $result[] = $normalized;
+            }
+        }
+
+        usort($result, [$this, 'compareBroadcastMessages']);
+
+        return $result;
     }
 
     public function processWebhookData(object $data): ?array
@@ -143,6 +164,7 @@ class MessageDispatchService
                 'from' => $from,
                 'to' => $to,
                 'type' => is_object($payload->type ?? null) ? null : ($payload->type ?? null),
+                'sortSequence' => (int) round(microtime(true) * 1000),
             ],
         ]);
 
@@ -168,6 +190,7 @@ class MessageDispatchService
         $payloadMeta = $data['payloadMeta'] ?? (object) [];
         $sessionId = $data['sessionId'] ?? $this->whatsappClient->getSessionId();
         $bodyPreview = $data['bodyPreview'] ?? $this->buildBodyPreview($body);
+        $incomingSource = $this->extractPayloadMetaValue($payloadMeta, 'source');
 
         $entity = $this->findStoredMessage($messageId, $chatId, $fromMe, $body, $timestamp);
 
@@ -179,6 +202,10 @@ class MessageDispatchService
         $existingMessageId = $entity->get('messageId');
         $existingBody = (string) ($entity->get('body') ?? '');
         $existingBodyPreview = (string) ($entity->get('bodyPreview') ?? '');
+        $existingPayloadMeta = $entity->get('payloadMeta') ?: [];
+        $existingSource = $this->extractPayloadMetaValue($existingPayloadMeta, 'source');
+        $existingTimestamp = $entity->get('timestamp');
+        $existingTimestampValue = $existingTimestamp ? strtotime((string) $existingTimestamp) : null;
 
         if ($body === '' && $existingBody !== '') {
             $body = $existingBody;
@@ -188,6 +215,15 @@ class MessageDispatchService
             $bodyPreview = $existingBodyPreview;
         }
 
+        if (
+            !$isNewEntity &&
+            $incomingSource === 'getChatMessages' &&
+            in_array($existingSource, ['sendMessage', 'webhook'], true) &&
+            $existingTimestampValue
+        ) {
+            $timestamp = $existingTimestampValue;
+        }
+
         $conversation = $this->conversationTrackingService->touchConversation(
             $sessionId,
             $chatId,
@@ -195,7 +231,7 @@ class MessageDispatchService
             [
                 'bodyPreview' => $bodyPreview,
                 'fromMe' => $fromMe,
-                'source' => is_array($payloadMeta) ? ($payloadMeta['source'] ?? null) : null,
+                'source' => $incomingSource,
                 'incrementMessageCount' => $isNewEntity ? 1 : 0,
             ]
         );
@@ -246,7 +282,9 @@ class MessageDispatchService
             $result[] = $this->normalizeEntityForBroadcast($message);
         }
 
-        return array_reverse($result);
+        usort($result, [$this, 'compareBroadcastMessages']);
+
+        return $result;
     }
 
     private function findStoredMessage(?string $messageId, string $chatId, bool $fromMe, string $body, int $timestamp): ?Entity
@@ -291,6 +329,10 @@ class MessageDispatchService
 
     private function normalizeTimestampValue($timestamp): int
     {
+        if (is_float($timestamp)) {
+            return (int) floor($timestamp);
+        }
+
         if (is_numeric($timestamp)) {
             return (int) $timestamp;
         }
@@ -380,6 +422,14 @@ class MessageDispatchService
     private function normalizeEntityForBroadcast(Entity $message): array
     {
         $fromMe = (bool) $message->get('fromMe');
+        $payloadMeta = $message->get('payloadMeta') ?: [];
+        $sortSequence = null;
+
+        if (is_array($payloadMeta)) {
+            $sortSequence = $payloadMeta['sortSequence'] ?? null;
+        } elseif (is_object($payloadMeta)) {
+            $sortSequence = $payloadMeta->sortSequence ?? null;
+        }
 
         return [
             'id' => $message->get('messageId') ?: $message->getId(),
@@ -393,7 +443,86 @@ class MessageDispatchService
             'status' => $message->get('status') ?? 'Received',
             'sessionId' => $message->get('sessionId'),
             'conversationId' => $message->get('conversationId'),
+            'sortSequence' => $sortSequence,
+            'payloadMeta' => $payloadMeta,
         ];
+    }
+
+    private function normalizeApiMessageForBroadcast(string $chatId, array $apiMessage, int $sortSequence): ?array
+    {
+        $messageId = $this->extractMessageId($apiMessage['id'] ?? $apiMessage['messageId'] ?? null);
+
+        if (!$messageId) {
+            return null;
+        }
+
+        $body = $this->resolveDisplayBody($apiMessage);
+
+        if ($this->shouldSkipNonDisplayMessage($apiMessage, $body)) {
+            return null;
+        }
+
+        $fromMe = (bool) ($apiMessage['fromMe'] ?? false);
+        $timestamp = $this->normalizeTimestampValue($apiMessage['timestamp'] ?? time());
+        $payloadMeta = [
+            'source' => 'getChatMessages',
+            'type' => $apiMessage['type'] ?? null,
+            'sortSequence' => $sortSequence,
+            'author' => $apiMessage['author'] ?? null,
+            'from' => $apiMessage['from'] ?? null,
+        ];
+
+        return [
+            'id' => $messageId,
+            'messageId' => $messageId,
+            'body' => $body,
+            'bodyPreview' => $this->buildBodyPreview($body),
+            'chatId' => $chatId,
+            'fromMe' => $fromMe,
+            'timestamp' => $timestamp,
+            'ack' => $fromMe ? 1 : 0,
+            'status' => $fromMe ? 'Sent' : 'Received',
+            'author' => $apiMessage['author'] ?? null,
+            'from' => $apiMessage['from'] ?? null,
+            'sessionId' => $this->whatsappClient->getSessionId(),
+            'conversationId' => null,
+            'sortSequence' => $sortSequence,
+            'payloadMeta' => $payloadMeta,
+        ];
+    }
+
+    private function extractPayloadMetaValue(array|object|null $payloadMeta, string $key): mixed
+    {
+        if (is_array($payloadMeta)) {
+            return $payloadMeta[$key] ?? null;
+        }
+
+        if (is_object($payloadMeta)) {
+            return $payloadMeta->{$key} ?? null;
+        }
+
+        return null;
+    }
+
+    private function extractMessageTimestamp(array $payload): ?int
+    {
+        $raw = $payload['timestamp'] ?? $payload['t'] ?? null;
+
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+
+        if (is_float($raw)) {
+            return (int) floor($raw);
+        }
+
+        if (is_numeric($raw)) {
+            return (int) $raw;
+        }
+
+        $parsed = strtotime((string) $raw);
+
+        return $parsed ?: null;
     }
 
     private function broadcastMessage(string $chatId, array $message): void
@@ -403,6 +532,30 @@ class MessageDispatchService
         } catch (\Throwable $e) {
             $this->log->error('WhatsApp WebSocket broadcast error: ' . $e->getMessage());
         }
+    }
+
+    private function compareBroadcastMessages(array $a, array $b): int
+    {
+        $sourceA = $this->extractPayloadMetaValue($a['payloadMeta'] ?? null, 'source');
+        $sourceB = $this->extractPayloadMetaValue($b['payloadMeta'] ?? null, 'source');
+        $timeA = $this->normalizeTimestampValue($a['timestamp'] ?? time());
+        $timeB = $this->normalizeTimestampValue($b['timestamp'] ?? time());
+        $seqA = isset($a['sortSequence']) ? (int) $a['sortSequence'] : 0;
+        $seqB = isset($b['sortSequence']) ? (int) $b['sortSequence'] : 0;
+
+        if ($sourceA === 'getChatMessages' && $sourceB === 'getChatMessages' && $seqA !== $seqB) {
+            return $seqA <=> $seqB;
+        }
+
+        if ($timeA !== $timeB) {
+            return $timeA <=> $timeB;
+        }
+
+        if ($seqA !== $seqB) {
+            return $seqA <=> $seqB;
+        }
+
+        return strcmp((string) ($a['messageId'] ?? $a['id'] ?? ''), (string) ($b['messageId'] ?? $b['id'] ?? ''));
     }
 
     private function pickCandidateByTimestamp(iterable $candidates, int $timestamp): ?Entity

@@ -120,6 +120,11 @@ class WhatsApp
 
             if (!empty($apiMessages)) {
                 $this->messageDispatchService->ingestApiMessages($chatId, $apiMessages);
+
+                return [
+                    'success' => true,
+                    'list' => $this->messageDispatchService->getLiveMessages($chatId, $apiMessages),
+                ];
             }
         } catch (\Throwable $e) {
             $this->log->warning('WhatsApp getChatMessages API fetch failed: ' . $e->getMessage());
