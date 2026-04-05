@@ -5,7 +5,7 @@ namespace Espo\Modules\WhatsApp\Services;
 use Espo\ORM\Entity;
 use Espo\ORM\EntityManager;
 use Espo\Core\Utils\Log;
-use Espo\Custom\Core\WhatsApp\WhatsAppClient;
+use Espo\Modules\WhatsApp\Core\WhatsAppClient;
 
 class MessageDispatchService
 {

@@ -1,21 +1,18 @@
 <?php
-namespace Espo\Custom\Core\WhatsApp;
+
+namespace Espo\Modules\WhatsApp\Core;
 
 use Espo\Core\Utils\Config;
 use Espo\Core\Utils\Log;
 
 class WhatsAppClient
 {
-    // TODO: generate uuid for each session
     private string $sessionId = 'espocrm-session';
-    private Config $config;
-    private Log $log;
 
-    public function __construct(Config $config, Log $log)
-    {
-        $this->config = $config;
-        $this->log = $log;
-    }
+    public function __construct(
+        private Config $config,
+        private Log $log
+    ) {}
 
     public function getSessionId(): string
     {
@@ -40,19 +37,21 @@ class WhatsAppClient
     public function getQRCode(): ?string
     {
         $response = $this->makeRequest('GET', "/session/qr/{$this->sessionId}");
+
         return $response['qr'] ?? null;
     }
 
     public function getSessionStatus(): string
     {
         $response = $this->makeRequest('GET', "/session/status/{$this->sessionId}");
-        // wwebjs-api returns { "success": true, "state": "CONNECTED", "message": "session_connected" }
+
         return $response['state'] ?? $response['status'] ?? 'disconnected';
     }
 
     public function getChats(): array
     {
         $response = $this->makeRequest('GET', "/client/getChats/{$this->sessionId}");
+
         return $response['chats'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
     }
 
@@ -86,6 +85,7 @@ class WhatsAppClient
     public function getContacts(): array
     {
         $response = $this->makeRequest('GET', "/client/getContacts/{$this->sessionId}");
+
         return $response['contacts'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
     }
 
@@ -93,26 +93,27 @@ class WhatsAppClient
     {
         if (strpos($chatId, '@') === false) {
             $cleanPhone = preg_replace('/[^0-9]/', '', $chatId);
+
             if (empty($cleanPhone)) {
-                $this->log->warning("WhatsAppClient: Empty phone/chatId provided.");
+                $this->log->warning('WhatsAppClient: Empty phone/chatId provided.');
+
                 return ['success' => false];
             }
+
             $chatId = $cleanPhone . '@c.us';
         }
 
-        $data = [
+        return $this->makeRequest('POST', "/client/sendMessage/{$this->sessionId}", [
             'chatId' => $chatId,
             'contentType' => 'string',
-            'content' => $message
-        ];
-
-        $response = $this->makeRequest('POST', "/client/sendMessage/{$this->sessionId}", $data);
-        return $response;
+            'content' => $message,
+        ]);
     }
 
     public function terminateSession(): bool
     {
         $response = $this->makeRequest('GET', "/session/terminate/{$this->sessionId}");
+
         return $response['success'] ?? false;
     }
 
@@ -134,6 +135,7 @@ class WhatsAppClient
 
         if (empty($apiKey)) {
             $this->log->error('WhatsAppClient: API Key is not configured.');
+
             return ['success' => false, 'error' => 'API Key not configured'];
         }
 
@@ -145,7 +147,7 @@ class WhatsAppClient
         curl_setopt($ch, CURLOPT_TIMEOUT, 30);
         curl_setopt($ch, CURLOPT_HTTPHEADER, [
             'X-API-KEY: ' . $apiKey,
-            'Content-Type: application/json'
+            'Content-Type: application/json',
         ]);
 
         if ($method === 'POST' && $data) {
@@ -157,18 +159,22 @@ class WhatsAppClient
         $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
         $curlError = curl_error($ch);
 
-
         if ($curlError) {
-            $this->log->error("WhatsAppClient cURL Error: " . $curlError);
+            $this->log->error('WhatsAppClient cURL Error: ' . $curlError);
+
             return ['success' => false, 'error' => $curlError];
         }
 
         if ($httpCode !== 200) {
-            // Suppress 404 for optional WA endpoints that may not exist across builds
-            if ($httpCode === 404 && (strpos($url, 'fetchMessages') !== false || strpos($url, 'syncHistory') !== false)) {
+            if (
+                $httpCode === 404 &&
+                (strpos($url, 'fetchMessages') !== false || strpos($url, 'syncHistory') !== false)
+            ) {
                 return ['success' => false, 'code' => $httpCode];
             }
+
             $this->log->error('WhatsAppClient API error fetching ' . $url, ['code' => $httpCode, 'response' => $response]);
+
             return ['success' => false, 'code' => $httpCode];
         }
 

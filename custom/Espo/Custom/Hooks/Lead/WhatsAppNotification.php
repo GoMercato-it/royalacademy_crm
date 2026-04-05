@@ -4,9 +4,9 @@ namespace Espo\Custom\Hooks\Lead;
 use Espo\Core\Hook\Hook\AfterSave;
 use Espo\ORM\Entity;
 use Espo\ORM\Repository\Option\SaveOptions;
-use Espo\Custom\Core\WhatsApp\WhatsAppClient;
 use Espo\Core\Utils\Config;
 use Espo\Core\Utils\Log;
+use Espo\Modules\WhatsApp\Core\WhatsAppClient;
 use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 
 class WhatsAppNotification implements AfterSave
