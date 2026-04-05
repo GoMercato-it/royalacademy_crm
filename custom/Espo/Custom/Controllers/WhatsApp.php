@@ -1,65 +1,29 @@
 <?php
 namespace Espo\Custom\Controllers;
 
-use Espo\Core\Controllers\Base;
 use Espo\Core\Api\Request;
 use Espo\Core\Api\Response;
 use Espo\Core\Exceptions\BadRequest;
 use Espo\Core\Exceptions\NotFound;
+use Espo\Core\Utils\Config;
+use Espo\Core\Utils\Config\ConfigWriter;
 use Espo\Custom\Core\WhatsApp\WhatsAppClient;
-use Espo\Core\InjectableFactory;
-use Espo\Modules\WhatsApp\Services\WebSocketService;
 use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 use Espo\Modules\WhatsApp\Services\SessionLifecycleService;
 use Espo\Modules\WhatsApp\Services\AvatarStorageService;
 use Espo\Modules\WhatsApp\Services\WorkflowActionService;
 
-class WhatsApp extends Base
+class WhatsApp
 {
-    private function getWhatsAppClient(): WhatsAppClient
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(WhatsAppClient::class);
-    }
-
-    /**
-     * Get WebSocketService for real-time event broadcasting
-     */
-    private function getWebSocketService(): WebSocketService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(WebSocketService::class);
-    }
-
-    private function getMessageDispatchService(): MessageDispatchService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(MessageDispatchService::class);
-    }
-
-    private function getSessionLifecycleService(): SessionLifecycleService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(SessionLifecycleService::class);
-    }
-
-    private function getAvatarStorageService(): AvatarStorageService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(AvatarStorageService::class);
-    }
-
-    private function getWorkflowActionService(): WorkflowActionService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(WorkflowActionService::class);
-    }
+    public function __construct(
+        private WhatsAppClient $whatsAppClient,
+        private MessageDispatchService $messageDispatchService,
+        private SessionLifecycleService $sessionLifecycleService,
+        private AvatarStorageService $avatarStorageService,
+        private WorkflowActionService $workflowActionService,
+        private Config $config,
+        private ConfigWriter $configWriter
+    ) {}
 
     private function normalizeTimestampValue($timestamp): int
     {
@@ -167,12 +131,12 @@ class WhatsApp extends Base
 
     public function getActionLogin(Request $request, Response $response): array
     {
-        $this->getWhatsAppClient()->startSession();
-        $qrCode = $this->getWhatsAppClient()->getQRCode();
+        $this->whatsAppClient->startSession();
+        $qrCode = $this->whatsAppClient->getQRCode();
 
         if ($qrCode) {
-            $this->getSessionLifecycleService()->markQrReady(
-                $this->getWhatsAppClient()->getSessionId(),
+            $this->sessionLifecycleService->markQrReady(
+                $this->whatsAppClient->getSessionId(),
                 ['source' => 'login']
             );
         }
@@ -185,11 +149,11 @@ class WhatsApp extends Base
 
     public function getActionQrCode(Request $request, Response $response): array
     {
-        $qr = $this->getWhatsAppClient()->getQRCode();
+        $qr = $this->whatsAppClient->getQRCode();
 
         if ($qr) {
-            $this->getSessionLifecycleService()->markQrReady(
-                $this->getWhatsAppClient()->getSessionId(),
+            $this->sessionLifecycleService->markQrReady(
+                $this->whatsAppClient->getSessionId(),
                 ['source' => 'qrCode']
             );
         }
@@ -202,10 +166,10 @@ class WhatsApp extends Base
     public function getActionStatus(Request $request, Response $response): array
     {
         // Check if enabled (default to true if null)
-        $enabled = $this->getConfig()->get('whatsappEnabled');
+        $enabled = $this->config->get('whatsappEnabled');
         if ($enabled === false) {
-            $this->getSessionLifecycleService()->recordState(
-                $this->getWhatsAppClient()->getSessionId(),
+            $this->sessionLifecycleService->recordState(
+                $this->whatsAppClient->getSessionId(),
                 'disabled',
                 ['rawState' => 'DISABLED']
             );
@@ -217,10 +181,10 @@ class WhatsApp extends Base
             ];
         }
 
-        $status = $this->getWhatsAppClient()->getSessionStatus();
+        $status = $this->whatsAppClient->getSessionStatus();
         $isConnected = in_array(strtoupper($status), ['CONNECTED', 'AUTHENTICATED']);
-        $this->getSessionLifecycleService()->syncTransportState(
-            $this->getWhatsAppClient()->getSessionId(),
+        $this->sessionLifecycleService->syncTransportState(
+            $this->whatsAppClient->getSessionId(),
             $status
         );
 
@@ -233,7 +197,7 @@ class WhatsApp extends Base
 
     public function getActionGetChats(Request $request, Response $response): array
     {
-        $chats = $this->getWhatsAppClient()->getChats();
+        $chats = $this->whatsAppClient->getChats();
 
         return [
             'success' => true,
@@ -249,20 +213,19 @@ class WhatsApp extends Base
         }
 
         $limit = (int) ($request->getQueryParam('limit') ?? 50);
-        $entityManager = $this->getContainer()->get('entityManager');
 
         // Step 1: Try fetching fresh messages from WAHA API and save new ones to DB
         try {
-            $apiMessages = $this->getWhatsAppClient()->getChatMessages($chatId, $limit);
+            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit);
             if (!empty($apiMessages)) {
-                $this->getMessageDispatchService()->ingestApiMessages($chatId, $apiMessages);
+                $this->messageDispatchService->ingestApiMessages($chatId, $apiMessages);
             }
         } catch (\Throwable $e) {
             $GLOBALS['log']->warning('WhatsApp getChatMessages API fetch failed: ' . $e->getMessage());
         }
 
         // Step 2: Always read final result from DB (now has API + webhook messages merged)
-        $result = $this->getMessageDispatchService()->getStoredMessages($chatId, $limit);
+        $result = $this->messageDispatchService->getStoredMessages($chatId, $limit);
 
         return [
             'success' => true,
@@ -272,7 +235,7 @@ class WhatsApp extends Base
 
     public function getActionGetContacts(Request $request, Response $response): array
     {
-        $contacts = $this->getWhatsAppClient()->getContacts();
+        $contacts = $this->whatsAppClient->getContacts();
 
         return [
             'success' => true,
@@ -287,10 +250,10 @@ class WhatsApp extends Base
             return ['url' => null];
         }
 
-        $link = $this->getAvatarStorageService()->ensureAvatar($id);
+        $link = $this->avatarStorageService->ensureAvatar($id);
 
         if ($link) {
-            $version = $this->getAvatarStorageService()->getAvatarVersion($id) ?: time();
+            $version = $this->avatarStorageService->getAvatarVersion($id) ?: time();
 
             return [
                 'url' => '/api/v1/WhatsApp/action/profilePicContent?id=' . rawurlencode($id) . '&v=' . $version,
@@ -308,7 +271,7 @@ class WhatsApp extends Base
             throw new NotFound('Avatar not found.');
         }
 
-        $payload = $this->getAvatarStorageService()->getAvatarContent($id);
+        $payload = $this->avatarStorageService->getAvatarContent($id);
 
         if (!$payload) {
             throw new NotFound('Avatar not found.');
@@ -321,11 +284,11 @@ class WhatsApp extends Base
 
     public function postActionLogout(Request $request, Response $response): array
     {
-        $result = $this->getWhatsAppClient()->terminateSession();
+        $result = $this->whatsAppClient->terminateSession();
 
         if ($result) {
-            $this->getSessionLifecycleService()->markDisconnected(
-                $this->getWhatsAppClient()->getSessionId(),
+            $this->sessionLifecycleService->markDisconnected(
+                $this->whatsAppClient->getSessionId(),
                 ['source' => 'logout']
             );
         }
@@ -351,7 +314,7 @@ class WhatsApp extends Base
             throw new BadRequest('Phone/chatId and message required');
         }
 
-        $result = $this->getMessageDispatchService()->sendMessage($phone, $message);
+        $result = $this->messageDispatchService->sendMessage($phone, $message);
 
         if ($result['success'] ?? false) {
             return [
@@ -374,7 +337,7 @@ class WhatsApp extends Base
         }
 
         try {
-            return $this->getWorkflowActionService()->execute($action, $payload);
+            return $this->workflowActionService->execute($action, $payload);
         } catch (\RuntimeException $e) {
             throw new BadRequest($e->getMessage());
         }
@@ -385,22 +348,22 @@ class WhatsApp extends Base
         $data = $request->getParsedBody();
 
         if (isset($data->whatsappApiUrl)) {
-            @$this->getConfig()->set('whatsappApiUrl', $data->whatsappApiUrl);
+            $this->configWriter->set('whatsappApiUrl', $data->whatsappApiUrl);
         }
         if (isset($data->whatsappApiKey)) {
-            @$this->getConfig()->set('whatsappApiKey', $data->whatsappApiKey);
+            $this->configWriter->set('whatsappApiKey', $data->whatsappApiKey);
         }
         if (isset($data->whatsappAutoMessageEnabled)) {
-            @$this->getConfig()->set('whatsappAutoMessageEnabled', $data->whatsappAutoMessageEnabled);
+            $this->configWriter->set('whatsappAutoMessageEnabled', $data->whatsappAutoMessageEnabled);
         }
         if (isset($data->whatsappLeadTemplate)) {
-            @$this->getConfig()->set('whatsappLeadTemplate', $data->whatsappLeadTemplate);
+            $this->configWriter->set('whatsappLeadTemplate', $data->whatsappLeadTemplate);
         }
         if (isset($data->whatsappEnabled)) {
-            @$this->getConfig()->set('whatsappEnabled', $data->whatsappEnabled);
+            $this->configWriter->set('whatsappEnabled', $data->whatsappEnabled);
         }
 
-        @$this->getConfig()->save();
+        $this->configWriter->save();
 
         return ['success' => true];
     }
@@ -414,7 +377,7 @@ class WhatsApp extends Base
         $data = $request->getParsedBody();
         $GLOBALS['log']->info('WhatsApp webhook received', (array) $data);
 
-        $this->getMessageDispatchService()->processWebhookData($data);
+        $this->messageDispatchService->processWebhookData($data);
 
         return ['success' => true];
     }

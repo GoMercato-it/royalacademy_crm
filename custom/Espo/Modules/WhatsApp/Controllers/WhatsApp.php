@@ -1,12 +1,10 @@
 <?php
 namespace Espo\Modules\WhatsApp\Controllers;
 
-use Espo\Core\Controllers\Base;
 use Espo\Core\Api\Request;
 use Espo\Core\Api\Response;
 use Espo\Core\Exceptions\BadRequest;
 use Espo\Custom\Core\WhatsApp\WhatsAppClient;
-use Espo\Core\InjectableFactory;
 use Espo\Modules\WhatsApp\Services\WebSocketService;
 use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 
@@ -15,28 +13,13 @@ use Espo\Modules\WhatsApp\Services\MessageDispatchService;
  * 
  * All message operations broadcast updates via WebSocket for instant UI updates
  */
-class WhatsApp extends Base
+class WhatsApp
 {
-    private function getWhatsAppClient(): WhatsAppClient
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(WhatsAppClient::class);
-    }
-
-    private function getWebSocketService(): WebSocketService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(WebSocketService::class);
-    }
-
-    private function getMessageDispatchService(): MessageDispatchService
-    {
-        /** @var InjectableFactory $factory */
-        $factory = $this->getContainer()->get('injectableFactory');
-        return $factory->create(MessageDispatchService::class);
-    }
+    public function __construct(
+        private WhatsAppClient $whatsAppClient,
+        private WebSocketService $webSocketService,
+        private MessageDispatchService $messageDispatchService
+    ) {}
 
     /**
      * Send a message via WhatsApp
@@ -52,7 +35,7 @@ class WhatsApp extends Base
             throw new BadRequest('chatId and message are required');
         }
 
-        return $this->getMessageDispatchService()->sendMessage($chatId, $message);
+        return $this->messageDispatchService->sendMessage($chatId, $message);
     }
 
     /**
@@ -71,8 +54,7 @@ class WhatsApp extends Base
         }
 
         try {
-            $wsService = $this->getWebSocketService();
-            $wsService->broadcastMessageAck($chatId, $messageId, $ack, $status);
+            $this->webSocketService->broadcastMessageAck($chatId, $messageId, $ack, $status);
             
             return [
                 'success' => true,
@@ -100,8 +82,7 @@ class WhatsApp extends Base
         }
 
         try {
-            $wsService = $this->getWebSocketService();
-            $wsService->broadcastTyping($chatId, $isTyping);
+            $this->webSocketService->broadcastTyping($chatId, $isTyping);
             
             return [
                 'success' => true,
