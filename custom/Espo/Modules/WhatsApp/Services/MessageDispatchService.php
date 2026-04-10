@@ -257,6 +257,11 @@ class MessageDispatchService
 
         $this->entityManager->saveEntity($entity);
 
+        if (!$conversation->get('firstMessageMessageId')) {
+            $conversation->set('firstMessageMessageId', $entity->get('messageId') ?: $entity->getId());
+            $this->entityManager->saveEntity($conversation);
+        }
+
         return $entity;
     }
 

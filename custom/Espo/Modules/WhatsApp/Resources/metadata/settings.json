@@ -3,6 +3,10 @@
         "type": "bool",
         "default": true
     },
+    "whatsappConversationTimeoutSeconds": {
+        "type": "int",
+        "default": 1200
+    },
     "whatsappApiUrl": {
         "type": "varchar",
         "default": "http://whatsapp-api:3000",

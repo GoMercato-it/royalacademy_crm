@@ -5,19 +5,19 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
         // template = 'custom:whatsapp/setup-v2';
         templateContent = `
 <div class="header-page">
-    <h3>WhatsApp Integration Settings</h3>
+    <h3>Integrazione WhatsApp</h3>
 </div>
 
 <div class="record">
     <div class="panel panel-default">
         <div class="panel-heading">
-            <h4 class="panel-title">Connection Settings</h4>
+            <h4 class="panel-title">Connessione</h4>
         </div>
         <div class="panel-body">
             <div class="row">
                 <div class="col-md-12">
                      <div class="form-group">
-                        <label class="control-label" data-name="whatsappEnabled">Enable WhatsApp Integration</label>
+                        <label class="control-label" data-name="whatsappEnabled">Abilita integrazione WhatsApp</label>
                         <div class="field" data-name="whatsappEnabled">
                             {{{whatsappEnabled}}}
                         </div>
@@ -27,7 +27,7 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
             <div class="row">
                 <div class="col-md-6">
                     <div class="form-group">
-                        <label class="control-label" data-name="whatsappApiUrl">WhatsApp API URL</label>
+                        <label class="control-label" data-name="whatsappApiUrl">URL API WhatsApp</label>
                         <div class="field" data-name="whatsappApiUrl">
                             {{{whatsappApiUrl}}}
                         </div>
@@ -35,7 +35,7 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
                 </div>
                 <div class="col-md-6">
                     <div class="form-group">
-                        <label class="control-label" data-name="whatsappApiKey">WhatsApp API Key</label>
+                        <label class="control-label" data-name="whatsappApiKey">Chiave API WhatsApp</label>
                         <div class="field" data-name="whatsappApiKey">
                             {{{whatsappApiKey}}}
                         </div>
@@ -47,13 +47,22 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
 
     <div class="panel panel-default">
         <div class="panel-heading">
-            <h4 class="panel-title">Automation</h4>
+            <h4 class="panel-title">Dialoghi e automazione</h4>
         </div>
         <div class="panel-body">
             <div class="row">
+                <div class="col-md-6">
+                    <div class="form-group">
+                        <label class="control-label" data-name="whatsappConversationTimeoutMinutes">Timeout dialogo (minuti)</label>
+                        <div class="field" data-name="whatsappConversationTimeoutMinutes">
+                            {{{whatsappConversationTimeoutMinutes}}}
+                        </div>
+                        <p class="help-block small">Tempo massimo di apertura automatica del dialogo prima della chiusura.</p>
+                    </div>
+                </div>
                 <div class="col-md-12">
                      <div class="form-group">
-                        <label class="control-label" data-name="whatsappAutoMessageEnabled">Enable Automated Welcome Message</label>
+                        <label class="control-label" data-name="whatsappAutoMessageEnabled">Abilita messaggio automatico di benvenuto</label>
                         <div class="field" data-name="whatsappAutoMessageEnabled">
                             {{{whatsappAutoMessageEnabled}}}
                         </div>
@@ -63,11 +72,11 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
             <div class="row">
                 <div class="col-md-12">
                     <div class="form-group">
-                        <label class="control-label" data-name="whatsappLeadTemplate">Message Template</label>
+                        <label class="control-label" data-name="whatsappLeadTemplate">Template messaggio</label>
                         <div class="field" data-name="whatsappLeadTemplate">
                             {{{whatsappLeadTemplate}}}
                         </div>
-                        <p class="help-block small">Available placeholders: {name}, {company}, {source}</p>
+                        <p class="help-block small">Placeholder disponibili: {name}, {company}, {source}</p>
                     </div>
                 </div>
             </div>
@@ -75,8 +84,8 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
     </div>
 
     <div class="button-container">
-        <button type="button" class="btn btn-primary action" data-action="save">Save</button>
-        <button type="button" class="btn btn-default action" data-action="cancel">Cancel</button>
+        <button type="button" class="btn btn-primary action" data-action="save">Salva</button>
+        <button type="button" class="btn btn-default action" data-action="cancel">Annulla</button>
     </div>
 </div>
 `;
@@ -96,6 +105,7 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
             this.createField('whatsappApiUrl', 'url');
             this.createField('whatsappApiKey', 'varchar');
             this.createField('whatsappEnabled', 'bool');
+            this.createField('whatsappConversationTimeoutMinutes', 'int');
             this.createField('whatsappAutoMessageEnabled', 'bool');
             this.createField('whatsappLeadTemplate', 'text');
 
@@ -116,6 +126,8 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
                 // Explicitly fetch settings
                 const data = await Espo.Ajax.getRequest('Settings');
                 this.model.set(data);
+                const timeoutSeconds = parseInt(data.whatsappConversationTimeoutSeconds || 1200, 10);
+                this.model.set('whatsappConversationTimeoutMinutes', Math.max(1, Math.round(timeoutSeconds / 60)));
                 
                 // Trigger change to update views if they were already rendered empty
                 // But view.render() will happen after setup(), so it should be fine.
@@ -137,6 +149,7 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
                 whatsappEnabled: data.whatsappEnabled,
                 whatsappApiUrl: data.whatsappApiUrl,
                 whatsappApiKey: data.whatsappApiKey,
+                whatsappConversationTimeoutSeconds: Math.max(1, parseInt(data.whatsappConversationTimeoutMinutes || 20, 10)) * 60,
                 whatsappAutoMessageEnabled: data.whatsappAutoMessageEnabled,
                 whatsappLeadTemplate: data.whatsappLeadTemplate
             };

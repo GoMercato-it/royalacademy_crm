@@ -1,0 +1,16 @@
+{
+    "scopeNames": {
+        "WhatsApp": "WhatsApp",
+        "WhatsAppMessage": "Messaggio WhatsApp",
+        "WhatsAppConversation": "Conversazione WhatsApp",
+        "WhatsAppContactLink": "Collegamento contatto WhatsApp",
+        "WhatsAppSession": "Sessione WhatsApp"
+    },
+    "scopeNamesPlural": {
+        "WhatsApp": "WhatsApp",
+        "WhatsAppMessage": "Messaggi WhatsApp",
+        "WhatsAppConversation": "Conversazioni WhatsApp",
+        "WhatsAppContactLink": "Collegamenti contatto WhatsApp",
+        "WhatsAppSession": "Sessioni WhatsApp"
+    }
+}

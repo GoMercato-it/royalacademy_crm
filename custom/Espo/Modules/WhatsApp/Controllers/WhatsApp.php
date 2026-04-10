@@ -11,6 +11,9 @@ use Espo\Core\Utils\Config\ConfigWriter;
 use Espo\Core\Utils\Log;
 use Espo\Modules\WhatsApp\Core\WhatsAppClient;
 use Espo\Modules\WhatsApp\Services\AvatarStorageService;
+use Espo\Modules\WhatsApp\Services\ChatFolderService;
+use Espo\Modules\WhatsApp\Services\ChatListSnapshotService;
+use Espo\Modules\WhatsApp\Services\ConversationTrackingService;
 use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 use Espo\Modules\WhatsApp\Services\SessionLifecycleService;
 use Espo\Modules\WhatsApp\Services\WebSocketService;
@@ -21,6 +24,9 @@ class WhatsApp
     public function __construct(
         private WhatsAppClient $whatsAppClient,
         private MessageDispatchService $messageDispatchService,
+        private ConversationTrackingService $conversationTrackingService,
+        private ChatFolderService $chatFolderService,
+        private ChatListSnapshotService $chatListSnapshotService,
         private SessionLifecycleService $sessionLifecycleService,
         private AvatarStorageService $avatarStorageService,
         private WorkflowActionService $workflowActionService,
@@ -32,8 +38,12 @@ class WhatsApp
 
     public function getActionLogin(Request $request, Response $response): array
     {
-        $this->whatsAppClient->startSession();
         $qrCode = $this->whatsAppClient->getQRCode();
+
+        if (!$qrCode) {
+            $this->whatsAppClient->startSession();
+            $qrCode = $this->whatsAppClient->getQRCode();
+        }
 
         if ($qrCode) {
             $this->sessionLifecycleService->markQrReady(
@@ -99,9 +109,15 @@ class WhatsApp
 
     public function getActionGetChats(Request $request, Response $response): array
     {
+        $refresh = filter_var($request->getQueryParam('refresh') ?? false, FILTER_VALIDATE_BOOL);
+        $snapshot = $this->chatListSnapshotService->getChatList($refresh);
+
         return [
             'success' => true,
-            'list' => $this->whatsAppClient->getChats(),
+            'list' => $snapshot['list'],
+            'fromCache' => $snapshot['fromCache'],
+            'stale' => $snapshot['stale'],
+            'cachedAt' => $snapshot['cachedAt'],
         ];
     }
 
@@ -113,17 +129,28 @@ class WhatsApp
             throw new BadRequest('chatId is required');
         }
 
-        $limit = (int) ($request->getQueryParam('limit') ?? 50);
+        $limit = max(1, min(1000, (int) ($request->getQueryParam('limit') ?? 50)));
+        $mode = strtolower((string) ($request->getQueryParam('mode') ?? 'auto'));
+        $refresh = filter_var($request->getQueryParam('refresh') ?? false, FILTER_VALIDATE_BOOL);
+        $storedList = $this->messageDispatchService->getStoredMessages($chatId, $limit);
+        $shouldRefresh = $refresh || in_array($mode, ['live', 'refresh'], true) || ($mode === 'auto' && empty($storedList));
+
+        if ($mode === 'stored' || !$shouldRefresh) {
+            return [
+                'success' => true,
+                'list' => $storedList,
+            ];
+        }
 
         try {
-            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit);
+            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit, empty($storedList));
 
             if (!empty($apiMessages)) {
                 $this->messageDispatchService->ingestApiMessages($chatId, $apiMessages);
 
                 return [
                     'success' => true,
-                    'list' => $this->messageDispatchService->getLiveMessages($chatId, $apiMessages),
+                    'list' => $this->messageDispatchService->getStoredMessages($chatId, $limit),
                 ];
             }
         } catch (\Throwable $e) {
@@ -132,7 +159,7 @@ class WhatsApp
 
         return [
             'success' => true,
-            'list' => $this->messageDispatchService->getStoredMessages($chatId, $limit),
+            'list' => $storedList,
         ];
     }
 
@@ -141,6 +168,49 @@ class WhatsApp
         return [
             'success' => true,
             'list' => $this->whatsAppClient->getContacts(),
+        ];
+    }
+
+    public function getActionGetChatContext(Request $request, Response $response): array
+    {
+        $chatId = $request->getQueryParam('chatId');
+        $phoneNumber = $request->getQueryParam('phoneNumber');
+
+        if (!$chatId) {
+            throw new BadRequest('chatId is required');
+        }
+
+        return [
+            'success' => true,
+            'data' => $this->conversationTrackingService->getChatContext($chatId, $phoneNumber),
+        ];
+    }
+
+    public function getActionGetConversationHistory(Request $request, Response $response): array
+    {
+        $chatId = $request->getQueryParam('chatId');
+
+        if (!$chatId) {
+            throw new BadRequest('chatId is required');
+        }
+
+        $limit = (int) ($request->getQueryParam('limit') ?? 25);
+
+        return [
+            'success' => true,
+            'list' => $this->conversationTrackingService->getConversationHistory(
+                $this->whatsAppClient->getSessionId(),
+                $chatId,
+                $limit
+            ),
+        ];
+    }
+
+    public function getActionGetChatFolders(Request $request, Response $response): array
+    {
+        return [
+            'success' => true,
+            'list' => $this->chatFolderService->getFolderList(),
         ];
     }
 
@@ -189,6 +259,7 @@ class WhatsApp
         $result = $this->whatsAppClient->terminateSession();
 
         if ($result) {
+            $this->chatListSnapshotService->clearSnapshot();
             $this->sessionLifecycleService->markDisconnected(
                 $this->whatsAppClient->getSessionId(),
                 ['source' => 'logout']
@@ -218,6 +289,85 @@ class WhatsApp
         }
 
         return $result;
+    }
+
+    public function postActionCreateContactFromChat(Request $request, Response $response): array
+    {
+        $data = $request->getParsedBody();
+        $chatId = $data->chatId ?? null;
+        $displayName = $data->displayName ?? null;
+        $phoneNumber = $data->phoneNumber ?? null;
+
+        if (!$chatId) {
+            throw new BadRequest('chatId is required');
+        }
+
+        return [
+            'success' => true,
+            'data' => $this->conversationTrackingService->createContactFromChat($chatId, $displayName, $phoneNumber),
+        ];
+    }
+
+    public function postActionCreateChatFolder(Request $request, Response $response): array
+    {
+        $data = $request->getParsedBody();
+        $name = trim((string) ($data->name ?? ''));
+
+        if ($name === '') {
+            throw new BadRequest('name is required');
+        }
+
+        try {
+            return [
+                'success' => true,
+                'list' => $this->chatFolderService->createFolder($name),
+            ];
+        } catch (\RuntimeException $e) {
+            throw new BadRequest($e->getMessage());
+        }
+    }
+
+    public function postActionDeleteChatFolder(Request $request, Response $response): array
+    {
+        $data = $request->getParsedBody();
+        $folderId = trim((string) ($data->folderId ?? ''));
+
+        if ($folderId === '') {
+            throw new BadRequest('folderId is required');
+        }
+
+        try {
+            return [
+                'success' => true,
+                'list' => $this->chatFolderService->deleteFolder($folderId),
+            ];
+        } catch (\RuntimeException $e) {
+            throw new BadRequest($e->getMessage());
+        }
+    }
+
+    public function postActionSetChatFolderMembership(Request $request, Response $response): array
+    {
+        $data = $request->getParsedBody();
+        $folderId = trim((string) ($data->folderId ?? ''));
+        $chatId = trim((string) ($data->chatId ?? ''));
+
+        if ($folderId === '' || $chatId === '') {
+            throw new BadRequest('folderId and chatId are required');
+        }
+
+        try {
+            return [
+                'success' => true,
+                'list' => $this->chatFolderService->setFolderMembership(
+                    $folderId,
+                    $chatId,
+                    (bool) ($data->enabled ?? false)
+                ),
+            ];
+        } catch (\RuntimeException $e) {
+            throw new BadRequest($e->getMessage());
+        }
     }
 
     public function postActionExecuteAction(Request $request, Response $response): array
@@ -256,10 +406,40 @@ class WhatsApp
         if (isset($data->whatsappEnabled)) {
             $this->configWriter->set('whatsappEnabled', $data->whatsappEnabled);
         }
+        if (isset($data->whatsappConversationTimeoutSeconds)) {
+            $this->configWriter->set(
+                'whatsappConversationTimeoutSeconds',
+                max(60, (int) $data->whatsappConversationTimeoutSeconds)
+            );
+        }
 
+        $this->ensureWhatsAppTab();
         $this->configWriter->save();
 
         return ['success' => true];
+    }
+
+    private function ensureWhatsAppTab(): void
+    {
+        $tabList = $this->config->get('tabList') ?? [];
+
+        if (!is_array($tabList)) {
+            return;
+        }
+
+        if (in_array('WhatsApp', $tabList, true)) {
+            return;
+        }
+
+        $index = array_search('Email', $tabList, true);
+
+        if ($index === false) {
+            $tabList[] = 'WhatsApp';
+        } else {
+            array_splice($tabList, $index + 1, 0, ['WhatsApp']);
+        }
+
+        $this->configWriter->set('tabList', $tabList);
     }
 
     public function postActionWebhook(Request $request, Response $response): array

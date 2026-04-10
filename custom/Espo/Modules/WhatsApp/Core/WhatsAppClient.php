@@ -55,7 +55,7 @@ class WhatsAppClient
         return $response['chats'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
     }
 
-    public function getChatMessages(string $chatId, int $limit = 100): array
+    public function getChatMessages(string $chatId, int $limit = 100, bool $allowSyncFallback = true): array
     {
         $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", [
             'chatId' => $chatId,
@@ -65,7 +65,7 @@ class WhatsAppClient
         ]);
         $messages = $response['messages'] ?? $response['data'] ?? [];
 
-        if (empty($messages)) {
+        if ($allowSyncFallback && empty($messages)) {
             $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", [
                 'chatId' => $chatId,
             ]);

@@ -1,0 +1,11 @@
+{
+    "fields": {
+        "contactType": "Тип"
+    },
+    "options": {
+        "contactType": {
+            "": "",
+            "WhatsApp": "WhatsApp"
+        }
+    }
+}

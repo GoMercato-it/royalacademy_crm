@@ -1,0 +1,8 @@
+{
+    "fields": {
+        "whatsappChatFolders": {
+            "type": "jsonArray",
+            "default": []
+        }
+    }
+}

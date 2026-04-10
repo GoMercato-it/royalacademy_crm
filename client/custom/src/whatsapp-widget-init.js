@@ -36,7 +36,9 @@
         wsRetryCount: 0,
         messageSortCounter: 0,
         chatRequestToken: null,
-        messageCacheByChat: {}
+        messageCacheByChat: {},
+        routeHandlersBound: false,
+        widgetSuppressedByRoute: false
     };
 
     var config = {
@@ -1045,12 +1047,76 @@
         return num;
     }
 
+    function isWhatsAppMainRoute() {
+        var hash = window.location.hash || '';
+
+        return /^#WhatsApp(?:$|[/?])/.test(hash);
+    }
+
+    function syncWidgetRouteVisibility() {
+        var shouldHide = isWhatsAppMainRoute();
+        var btn = _$('whatsapp-floating-btn');
+        var panel = _$('wa-panel-root');
+
+        state.widgetSuppressedByRoute = shouldHide;
+
+        if (shouldHide) {
+            if (state.isOpen) {
+                close();
+            }
+
+            if (btn) {
+                btn.style.display = 'none';
+            }
+
+            if (panel) {
+                panel.classList.remove('open');
+                panel.style.display = 'none';
+                panel.style.opacity = '0';
+                panel.style.pointerEvents = 'none';
+            }
+
+            stopPolling();
+
+            return true;
+        }
+
+        if (panel) {
+            panel.style.display = '';
+        }
+
+        if (btn) {
+            btn.style.display = config.enabled ? 'flex' : 'none';
+        }
+
+        return false;
+    }
+
+    function bindRouteVisibilityHandlers() {
+        if (state.routeHandlersBound) return;
+
+        state.routeHandlersBound = true;
+
+        var handler = function () {
+            if (syncWidgetRouteVisibility()) {
+                return;
+            }
+
+            checkStatus();
+        };
+
+        window.addEventListener('hashchange', handler);
+        window.addEventListener('popstate', handler);
+    }
+
     /* ── UI Building ────────────────────────────────────────────── */
 
     /* ── Navigation ──────────────────────────────────────────────── */
     function toggle() { state.isOpen ? close() : open(); }
     
     function open() {
+        if (syncWidgetRouteVisibility()) return;
+
         state.isOpen = true;
         var p = _$('wa-panel-root');
         if (p) {
@@ -1134,6 +1200,10 @@
 
     /* ── Status & Polling ───────────────────────────────────────── */
     function checkStatus() {
+        if (syncWidgetRouteVisibility()) {
+            return;
+        }
+
         api('GET', 'WhatsApp/action/status').then(function (r) {
             state.status = r.status || 'disconnected';
             config.enabled = r.enabled !== false;
@@ -2025,6 +2095,7 @@
         document.body.appendChild(btn);
 
         btn.addEventListener('click', function () {
+            if (state.widgetSuppressedByRoute) return;
             if (!state.panelBuilt) buildPanel();
             toggle();
         });
@@ -2200,6 +2271,7 @@
         root.innerHTML = panelHtml;
         document.body.appendChild(root);
         initAvatarObserver();
+        syncWidgetRouteVisibility();
         
         // --- Inject Resizers ---
         var resizers = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
@@ -2299,6 +2371,12 @@
         state.initialized = true;
 
         buildButton();
+        bindRouteVisibilityHandlers();
+
+        if (syncWidgetRouteVisibility()) {
+            return;
+        }
+
         checkStatus();
         startPolling();
 

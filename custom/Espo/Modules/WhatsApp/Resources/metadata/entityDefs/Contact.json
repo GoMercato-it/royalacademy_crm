@@ -1,0 +1,13 @@
+{
+    "fields": {
+        "contactType": {
+            "type": "enum",
+            "options": [
+                "",
+                "WhatsApp"
+            ],
+            "default": "",
+            "audited": true
+        }
+    }
+}

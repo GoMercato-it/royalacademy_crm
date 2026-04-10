@@ -1,6 +1,6 @@
 <?php
 
-namespace Espo\Custom\Entities;
+namespace Espo\Modules\WhatsApp\Entities;
 
 use Espo\Core\ORM\Entity;
 use Espo\Custom\Contracts\Uploadable;

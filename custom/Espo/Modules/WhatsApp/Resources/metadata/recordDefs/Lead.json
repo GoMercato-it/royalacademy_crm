@@ -1,0 +1,6 @@
+{
+    "afterCreateHookClassNameList": [
+        "__APPEND__",
+        "Espo\\Modules\\WhatsApp\\Classes\\RecordHooks\\Lead\\AfterCreate"
+    ]
+}

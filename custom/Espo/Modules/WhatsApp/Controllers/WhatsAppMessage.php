@@ -1,5 +1,5 @@
 <?php
-namespace Espo\Custom\Controllers;
+namespace Espo\Modules\WhatsApp\Controllers;
 
 use Espo\Core\Controllers\Record;
 

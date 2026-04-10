@@ -1,0 +1,11 @@
+{
+    "fields": {
+        "whatsappConversationTimeoutMinutes": "Dialogue Timeout (minutes)",
+        "whatsappConversationTimeoutSeconds": "Dialogue Timeout (seconds)",
+        "whatsappEnabled": "WhatsApp Integration Enabled",
+        "whatsappApiUrl": "WhatsApp API URL",
+        "whatsappApiKey": "WhatsApp API Key",
+        "whatsappAutoMessageEnabled": "Enable Automated Welcome Message",
+        "whatsappLeadTemplate": "Message Template"
+    }
+}

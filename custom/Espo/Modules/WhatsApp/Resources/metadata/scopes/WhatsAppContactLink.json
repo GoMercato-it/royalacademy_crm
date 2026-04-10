@@ -3,6 +3,6 @@
     "layouts": false,
     "tab": false,
     "acl": true,
-    "module": "Custom",
+    "module": "WhatsApp",
     "custom": true
 }

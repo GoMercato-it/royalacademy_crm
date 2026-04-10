@@ -1,9 +1,9 @@
-define('custom:controllers/whatsapp', ['controller'], function (Controller) {
+define('custom:controllers/whatsapp-v2', ['controller'], function (Controller) {
 
     return class extends Controller {
 
         actionIndex() {
-            this.main('custom:views/whatsapp/main', {
+            this.main('custom:views/whatsapp/main-v2', {
                 scope: 'WhatsApp'
             });
         }

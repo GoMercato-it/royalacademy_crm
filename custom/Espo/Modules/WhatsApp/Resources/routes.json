@@ -48,11 +48,67 @@
     }
   },
   {
+    "route": "/WhatsApp/action/getChatContext",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getChatContext"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getConversationHistory",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getConversationHistory"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getChatFolders",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getChatFolders"
+    }
+  },
+  {
     "route": "/WhatsApp/action/logout",
     "method": "post",
     "params": {
       "controller": "WhatsApp",
       "action": "logout"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/createContactFromChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "createContactFromChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/createChatFolder",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "createChatFolder"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/deleteChatFolder",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "deleteChatFolder"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/setChatFolderMembership",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "setChatFolderMembership"
     }
   },
   {

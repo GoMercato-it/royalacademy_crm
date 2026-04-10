@@ -1,0 +1,11 @@
+{
+    "fields": {
+        "whatsappConversationTimeoutMinutes": "Таймаут диалога (минуты)",
+        "whatsappConversationTimeoutSeconds": "Таймаут диалога (секунды)",
+        "whatsappEnabled": "Интеграция WhatsApp включена",
+        "whatsappApiUrl": "URL WhatsApp API",
+        "whatsappApiKey": "Ключ WhatsApp API",
+        "whatsappAutoMessageEnabled": "Включить автоматическое приветственное сообщение",
+        "whatsappLeadTemplate": "Шаблон сообщения"
+    }
+}

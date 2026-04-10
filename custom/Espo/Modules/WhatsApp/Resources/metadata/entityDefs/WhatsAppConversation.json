@@ -22,6 +22,11 @@
             "len": 50,
             "index": true
         },
+        "firstMessageMessageId": {
+            "type": "varchar",
+            "len": 100,
+            "index": true
+        },
         "status": {
             "type": "enum",
             "options": ["open", "idle", "closed", "archived"],
