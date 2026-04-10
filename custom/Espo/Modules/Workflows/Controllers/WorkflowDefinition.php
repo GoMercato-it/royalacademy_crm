@@ -1,6 +1,6 @@
 <?php
 
-namespace Espo\Custom\Controllers;
+namespace Espo\Modules\Workflows\Controllers;
 
 use Espo\Core\Controllers\Record;
 

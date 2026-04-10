@@ -46,12 +46,6 @@
                 "description": "webhooks"
             },
             {
-                "url": "#WorkflowDefinition",
-                "label": "Workflows",
-                "iconClass": "fas fa-project-diagram",
-                "description": "Configure workflow automations"
-            },
-            {
                 "url": "#Admin/addressCountries",
                 "label": "Address Countries",
                 "iconClass": "far fa-flag",

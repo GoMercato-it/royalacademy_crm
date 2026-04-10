@@ -1,0 +1,11 @@
+{
+    "scopeNames": {
+        "WorkflowDefinition": "Workflow"
+    },
+    "scopeNamesPlural": {
+        "WorkflowDefinition": "Workflows"
+    },
+    "messages": {
+        "workflowLabel": "Workflow"
+    }
+}

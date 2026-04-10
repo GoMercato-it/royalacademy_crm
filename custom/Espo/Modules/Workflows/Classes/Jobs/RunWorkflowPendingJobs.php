@@ -1,6 +1,6 @@
 <?php
 
-namespace Espo\Custom\Classes\Jobs;
+namespace Espo\Modules\Workflows\Classes\Jobs;
 
 use Espo\Core\Job\JobDataLess;
 use Espo\Core\Utils\Log;

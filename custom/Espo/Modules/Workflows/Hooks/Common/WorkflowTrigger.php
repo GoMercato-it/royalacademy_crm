@@ -1,6 +1,6 @@
 <?php
 
-namespace Espo\Custom\Hooks\Common;
+namespace Espo\Modules\Workflows\Hooks\Common;
 
 use Espo\Core\Hook\Hook\AfterSave;
 use Espo\Core\ORM\Entity as CoreEntity;

@@ -1,0 +1,8 @@
+{
+    "WorkflowDefinition": {
+        "entity": true,
+        "type": "Base",
+        "custom": true,
+        "tab": false
+    }
+}

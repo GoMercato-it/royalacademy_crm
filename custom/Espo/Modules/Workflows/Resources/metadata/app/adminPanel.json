@@ -1,0 +1,12 @@
+{
+    "setup": {
+        "itemList": [
+            {
+                "url": "#WorkflowDefinition",
+                "label": "Workflows",
+                "iconClass": "fas fa-project-diagram",
+                "description": "Configure workflow automations"
+            }
+        ]
+    }
+}
