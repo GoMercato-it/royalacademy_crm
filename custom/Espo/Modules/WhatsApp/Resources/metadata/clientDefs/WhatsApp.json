@@ -1,5 +1,5 @@
 {
-  "controller": "custom:controllers/whatsapp-v2",
+  "controller": "custom:controllers/whatsapp",
   "menu": {
     "handler": false
   }

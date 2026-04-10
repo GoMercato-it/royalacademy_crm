@@ -1,8 +1,7 @@
-define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Model) {
+define('custom:views/whatsapp/setup', ['view', 'model'], function (View, Model) {
 
     return class extends View {
-        
-        // template = 'custom:whatsapp/setup-v2';
+
         templateContent = `
 <div class="header-page">
     <h3>Integrazione WhatsApp</h3>
@@ -96,12 +95,9 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
         };
 
         setup() {
-            // Create Settings model
             this.model = new Model();
             this.model.name = 'Settings';
-            // We won't use urlRoot for fetch/save directly to be safe
 
-            // Explicitly create views for each field
             this.createField('whatsappApiUrl', 'url');
             this.createField('whatsappApiKey', 'varchar');
             this.createField('whatsappEnabled', 'bool');
@@ -123,28 +119,20 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
 
         async loadData() {
             try {
-                // Explicitly fetch settings
                 const data = await Espo.Ajax.getRequest('Settings');
                 this.model.set(data);
                 const timeoutSeconds = parseInt(data.whatsappConversationTimeoutSeconds || 1200, 10);
                 this.model.set('whatsappConversationTimeoutMinutes', Math.max(1, Math.round(timeoutSeconds / 60)));
-                
-                // Trigger change to update views if they were already rendered empty
-                // But view.render() will happen after setup(), so it should be fine.
             } catch (e) {
-                console.error("Failed to load settings", e);
-                Espo.Ui.error("Failed to load settings");
+                console.error('Failed to load settings', e);
+                Espo.Ui.error('Failed to load settings');
             }
         }
 
         async actionSave() {
-            // Notify user that save started
             Espo.Ui.notify('Saving...');
-            
-            // Get data from model
+
             const data = this.model.attributes;
-            
-            // We only need to send the relevant fields
             const payload = {
                 whatsappEnabled: data.whatsappEnabled,
                 whatsappApiUrl: data.whatsappApiUrl,
@@ -155,26 +143,26 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
             };
 
             try {
-                // Use Custom Controller Action
                 await Espo.Ajax.postRequest('WhatsApp/action/saveSettings', payload);
                 Espo.Ui.success(this.translate('Saved'));
             } catch (e) {
-                console.error("Save failed", e);
+                console.error('Save failed', e);
                 let msg = 'Error';
+
                 if (e.response) {
                     if (e.response.status === 404) {
                         msg = '404 Not Found (Check Routes)';
                     } else if (e.response.status === 500) {
                         msg = '500 Server Error: ' + (e.response.statusText || 'Internal Error');
-                        // Try to parse JSON error if available
+
                         if (e.response.responseJSON && e.response.responseJSON.message) {
                             msg += ' - ' + e.response.responseJSON.message;
                         } else if (e.response.responseText) {
-                             // Log response text for debugging
-                             console.error("Response Text:", e.response.responseText);
+                            console.error('Response Text:', e.response.responseText);
                         }
                     }
                 }
+
                 Espo.Ui.error(msg);
             }
         }
@@ -182,5 +170,5 @@ define('custom:views/whatsapp/setup-v2', ['view', 'model'], function (View, Mode
         actionCancel() {
             this.getRouter().navigate('#Admin', {trigger: true});
         }
-    }
+    };
 });

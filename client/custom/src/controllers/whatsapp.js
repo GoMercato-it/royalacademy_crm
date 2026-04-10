@@ -9,7 +9,7 @@ define('custom:controllers/whatsapp', ['controller'], function (Controller) {
         }
 
         actionSetup(ids) {
-            this.main('custom:views/whatsapp/setup-v2', {
+            this.main('custom:views/whatsapp/setup', {
                 scope: 'Settings',
                 id: 'Settings'
             });

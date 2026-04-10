@@ -2,5 +2,5 @@
   "label": "WhatsApp Integration",
   "description": "WhatsApp Integration Settings",
   "iconClass": "fab fa-whatsapp",
-  "view": "custom:views/whatsapp/setup-v2"
+  "view": "custom:views/whatsapp/setup"
 }
