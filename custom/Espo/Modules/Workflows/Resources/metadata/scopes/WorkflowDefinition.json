@@ -12,7 +12,7 @@
         "stream": ["no"]
     },
     "aclPortal": false,
-    "module": "Custom",
+    "module": "Workflows",
     "custom": true,
     "isCustom": true,
     "notifications": false,

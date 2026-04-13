@@ -47,7 +47,7 @@
         },
         "actions": {
             "type": "jsonArray",
-            "view": "custom:views/workflows/fields/actions-v3",
+            "view": "custom:views/workflows/fields/actions",
             "options": [
                 "record.create_record",
                 "record.create_task",

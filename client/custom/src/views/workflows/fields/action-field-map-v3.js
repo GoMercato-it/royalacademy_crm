@@ -137,7 +137,7 @@ define('custom:views/workflows/fields/action-field-map-v3', [
         }
 
         openItemModal(item, onApply) {
-            this.createView('dialog', 'custom:views/workflows/modals/edit-field-map-item-v3', {
+            this.createView('dialog', 'custom:views/workflows/modals/edit-field-map-item', {
                 entityType: this.model.get('targetEntityType'),
                 sourceEntityType: this.sourceEntityType,
                 item: Espo.Utils.cloneDeep(item),

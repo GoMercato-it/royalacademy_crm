@@ -148,107 +148,107 @@ define('custom:views/workflows/modals/edit-action-v3', [
                     },
                     recordIdConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     assignedUserConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     fieldAssignments: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/action-field-map-v3'
+                        view: 'custom:views/workflows/fields/action-field-map'
                     },
                     taskNameConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskDescriptionConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskStatusConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskPriorityConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskDateStartConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskDateEndConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskAssignedUserConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskParentTypeConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     taskParentIdConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingNameConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingDescriptionConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingStatusConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingAssignedUserConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingParentTypeConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingParentIdConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingDateStartConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     meetingDateEndConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     waIdConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     messageBodyConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     toEmailConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     emailSubjectConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     emailBodyConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     },
                     emailTemplateConfig: {
                         type: 'base',
-                        view: 'custom:views/workflows/fields/value-config-v4'
+                        view: 'custom:views/workflows/fields/value-config'
                     }
                 }
             };

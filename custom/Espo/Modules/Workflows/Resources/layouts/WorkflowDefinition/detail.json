@@ -48,7 +48,7 @@
                 {
                     "name": "actions",
                     "fullWidth": true,
-                    "view": "custom:views/workflows/fields/actions-v3"
+                    "view": "custom:views/workflows/fields/actions"
                 }
             ],
             [
