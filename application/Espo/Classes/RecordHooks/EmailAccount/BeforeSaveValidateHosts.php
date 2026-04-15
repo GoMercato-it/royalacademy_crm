@@ -76,7 +76,7 @@ class BeforeSaveValidateHosts implements SaveHook
             return;
         }
 
-        if (!$this->hostCheck->isNotInternalHost($host)) {
+        if (!$this->hostCheck->isHostAndNotInternal($host)) {
             $message = $this->composeErrorMessage($host, $address);
 
             throw new Forbidden($message);
@@ -97,7 +97,11 @@ class BeforeSaveValidateHosts implements SaveHook
 
         $address = $host . ':' . $port;
 
-        if (!$this->hostCheck->isNotInternalHost($host)) {
+        if (in_array($address, $this->getAllowedAddressList())) {
+            return;
+        }
+
+        if (!$this->hostCheck->isHostAndNotInternal($host)) {
             $message = $this->composeErrorMessage($host, $address);
 
             throw new Forbidden($message);
