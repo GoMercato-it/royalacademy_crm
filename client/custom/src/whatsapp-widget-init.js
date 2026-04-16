@@ -350,6 +350,12 @@
     function compareMessagesForThread(a, b) {
         var timeA = normalizeTimestamp(a.timestamp);
         var timeB = normalizeTimestamp(b.timestamp);
+        var timeDiff = timeA - timeB;
+
+        if (timeDiff !== 0) {
+            return timeDiff;
+        }
+
         var bothLiveHistory =
             a &&
             b &&

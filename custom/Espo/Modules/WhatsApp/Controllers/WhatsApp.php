@@ -132,6 +132,7 @@ class WhatsApp
         $limit = max(1, min(1000, (int) ($request->getQueryParam('limit') ?? 50)));
         $mode = strtolower((string) ($request->getQueryParam('mode') ?? 'auto'));
         $refresh = filter_var($request->getQueryParam('refresh') ?? false, FILTER_VALIDATE_BOOL);
+        $sync = filter_var($request->getQueryParam('sync') ?? false, FILTER_VALIDATE_BOOL) || $mode === 'sync';
         $storedList = $this->messageDispatchService->getStoredMessages($chatId, $limit);
         $shouldRefresh = $refresh || in_array($mode, ['live', 'refresh'], true) || ($mode === 'auto' && empty($storedList));
 
@@ -143,14 +144,15 @@ class WhatsApp
         }
 
         try {
-            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit, empty($storedList));
+            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit, $sync && empty($storedList));
 
             if (!empty($apiMessages)) {
+                $liveList = $this->messageDispatchService->getLiveMessages($chatId, $apiMessages);
                 $this->messageDispatchService->ingestApiMessages($chatId, $apiMessages);
 
                 return [
                     'success' => true,
-                    'list' => $this->messageDispatchService->getStoredMessages($chatId, $limit),
+                    'list' => $liveList,
                 ];
             }
         } catch (\Throwable $e) {
@@ -285,6 +287,7 @@ class WhatsApp
             return [
                 'success' => true,
                 'messageId' => $result['messageId'] ?? null,
+                'message' => $result['message'] ?? null,
             ];
         }
 

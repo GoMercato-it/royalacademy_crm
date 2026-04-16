@@ -58,6 +58,10 @@ class MessageDispatchService
 
     public function ingestApiMessages(string $chatId, array $apiMessages): void
     {
+        if ($this->shouldSkipChatId($chatId)) {
+            return;
+        }
+
         foreach (array_values($apiMessages) as $index => $apiMessage) {
             $messageId = $this->extractMessageId($apiMessage['id'] ?? $apiMessage['messageId'] ?? null);
 
@@ -82,11 +86,11 @@ class MessageDispatchService
                     'payloadMeta' => [
                         'source' => 'getChatMessages',
                         'type' => $apiMessage['type'] ?? null,
-                        'sortSequence' => $index,
+                        'sortSequence' => $this->buildHistorySortSequence($apiMessage['timestamp'] ?? time(), $index),
                     ],
                 ]);
             } catch (\PDOException $e) {
-                if ($e->getCode() !== '23000' && strpos($e->getMessage(), '1062') === false) {
+                if (!$this->isDuplicateException($e)) {
                     $this->log->warning('WhatsApp ingestApiMessages save error: ' . $e->getMessage());
                 }
             }
@@ -95,6 +99,10 @@ class MessageDispatchService
 
     public function getLiveMessages(string $chatId, array $apiMessages): array
     {
+        if ($this->shouldSkipChatId($chatId)) {
+            return [];
+        }
+
         $result = [];
 
         foreach (array_values($apiMessages) as $index => $apiMessage) {
@@ -104,8 +112,6 @@ class MessageDispatchService
                 $result[] = $normalized;
             }
         }
-
-        usort($result, [$this, 'compareBroadcastMessages']);
 
         return $result;
     }
@@ -141,6 +147,10 @@ class MessageDispatchService
         $chatId = $fromMe ? $to : $from;
         $status = $fromMe ? 'Sent' : 'Received';
 
+        if ($this->shouldSkipChatId($chatId)) {
+            return null;
+        }
+
         if ($messageId) {
             $existing = $this->entityManager
                 ->getRepository('WhatsAppMessage')
@@ -152,21 +162,41 @@ class MessageDispatchService
             }
         }
 
-        $storedMessage = $this->storeMessage([
-            'body' => $body,
-            'chatId' => $chatId,
-            'fromMe' => $fromMe,
-            'timestamp' => $payload->timestamp ?? time(),
-            'status' => $status,
-            'messageId' => $messageId,
-            'payloadMeta' => [
-                'source' => 'webhook',
-                'from' => $from,
-                'to' => $to,
-                'type' => is_object($payload->type ?? null) ? null : ($payload->type ?? null),
-                'sortSequence' => (int) round(microtime(true) * 1000),
-            ],
-        ]);
+        try {
+            $storedMessage = $this->storeMessage([
+                'body' => $body,
+                'chatId' => $chatId,
+                'fromMe' => $fromMe,
+                'timestamp' => $payload->timestamp ?? time(),
+                'status' => $status,
+                'messageId' => $messageId,
+                'payloadMeta' => [
+                    'source' => 'webhook',
+                    'from' => $from,
+                    'to' => $to,
+                    'type' => is_object($payload->type ?? null) ? null : ($payload->type ?? null),
+                    'sortSequence' => (int) round(microtime(true) * 1000),
+                ],
+            ]);
+        } catch (\PDOException $e) {
+            if (!$this->isDuplicateException($e)) {
+                throw $e;
+            }
+
+            $existing = $this->findStoredMessage(
+                $messageId,
+                $chatId,
+                $fromMe,
+                $body,
+                $this->normalizeTimestampValue($payload->timestamp ?? time())
+            );
+
+            if (!$existing) {
+                throw $e;
+            }
+
+            return $this->normalizeEntityForBroadcast($existing);
+        }
 
         $message = $this->normalizeEntityForBroadcast($storedMessage);
         $this->broadcastMessage($chatId, $message);
@@ -187,7 +217,7 @@ class MessageDispatchService
         $timestamp = $this->normalizeTimestampValue($data['timestamp'] ?? time());
         $messageId = $data['messageId'] ?? null;
         $status = $data['status'] ?? ($fromMe ? 'Sent' : 'Received');
-        $payloadMeta = $data['payloadMeta'] ?? (object) [];
+        $payloadMeta = $this->normalizePayloadMeta($data['payloadMeta'] ?? []);
         $sessionId = $data['sessionId'] ?? $this->whatsappClient->getSessionId();
         $bodyPreview = $data['bodyPreview'] ?? $this->buildBodyPreview($body);
         $incomingSource = $this->extractPayloadMetaValue($payloadMeta, 'source');
@@ -202,10 +232,15 @@ class MessageDispatchService
         $existingMessageId = $entity->get('messageId');
         $existingBody = (string) ($entity->get('body') ?? '');
         $existingBodyPreview = (string) ($entity->get('bodyPreview') ?? '');
-        $existingPayloadMeta = $entity->get('payloadMeta') ?: [];
+        $existingPayloadMeta = $this->normalizePayloadMeta($entity->get('payloadMeta') ?: []);
         $existingSource = $this->extractPayloadMetaValue($existingPayloadMeta, 'source');
         $existingTimestamp = $entity->get('timestamp');
         $existingTimestampValue = $existingTimestamp ? strtotime((string) $existingTimestamp) : null;
+        $preserveRealtimeMetadata = (
+            !$isNewEntity &&
+            $incomingSource === 'getChatMessages' &&
+            in_array($existingSource, ['sendMessage', 'webhook'], true)
+        );
 
         if ($body === '' && $existingBody !== '') {
             $body = $existingBody;
@@ -215,14 +250,23 @@ class MessageDispatchService
             $bodyPreview = $existingBodyPreview;
         }
 
-        if (
-            !$isNewEntity &&
-            $incomingSource === 'getChatMessages' &&
-            in_array($existingSource, ['sendMessage', 'webhook'], true) &&
-            $existingTimestampValue
-        ) {
+        if ($preserveRealtimeMetadata && $existingTimestampValue) {
             $timestamp = $existingTimestampValue;
         }
+
+        $payloadMeta = array_merge($existingPayloadMeta, $payloadMeta);
+
+        if ($preserveRealtimeMetadata) {
+            $payloadMeta['source'] = $existingSource;
+
+            if (array_key_exists('sortSequence', $existingPayloadMeta)) {
+                $payloadMeta['sortSequence'] = $existingPayloadMeta['sortSequence'];
+            } elseif (array_key_exists('sortSequence', $payloadMeta)) {
+                unset($payloadMeta['sortSequence']);
+            }
+        }
+
+        $storedSource = $this->extractPayloadMetaValue($payloadMeta, 'source');
 
         $conversation = $this->conversationTrackingService->touchConversation(
             $sessionId,
@@ -231,7 +275,7 @@ class MessageDispatchService
             [
                 'bodyPreview' => $bodyPreview,
                 'fromMe' => $fromMe,
-                'source' => $incomingSource,
+                'source' => $storedSource,
                 'incrementMessageCount' => $isNewEntity ? 1 : 0,
             ]
         );
@@ -246,7 +290,7 @@ class MessageDispatchService
             'status' => $status,
             'sessionId' => $sessionId,
             'conversationId' => $conversationId,
-            'payloadMeta' => $payloadMeta ?: (object) [],
+            'payloadMeta' => $payloadMeta ? (object) $payloadMeta : (object) [],
         ]);
 
         if ($messageId && (!$existingMessageId || $existingMessageId === $messageId || $this->isTemporaryMessageId($existingMessageId))) {
@@ -347,6 +391,11 @@ class MessageDispatchService
         return $parsed ?: time();
     }
 
+    private function buildHistorySortSequence($timestamp, int $index): int
+    {
+        return ($this->normalizeTimestampValue($timestamp) * 10000) + max(0, $index);
+    }
+
     private function resolveDisplayBody(array|object $message): string
     {
         $body = trim((string) $this->readMessageValue($message, 'body', ''));
@@ -385,6 +434,21 @@ class MessageDispatchService
             'gp2',
             'ciphertext',
         ], true);
+    }
+
+    private function shouldSkipChatId(string $chatId): bool
+    {
+        $chatId = trim($chatId);
+
+        return $chatId === '' ||
+            $chatId === 'status@broadcast' ||
+            str_ends_with($chatId, '@newsletter') ||
+            str_ends_with($chatId, '@broadcast');
+    }
+
+    private function isDuplicateException(\PDOException $e): bool
+    {
+        return $e->getCode() === '23000' || strpos($e->getMessage(), '1062') !== false;
     }
 
     private function readMessageValue(array|object $message, string $key, mixed $default = null): mixed
@@ -428,13 +492,9 @@ class MessageDispatchService
     {
         $fromMe = (bool) $message->get('fromMe');
         $payloadMeta = $message->get('payloadMeta') ?: [];
-        $sortSequence = null;
-
-        if (is_array($payloadMeta)) {
-            $sortSequence = $payloadMeta['sortSequence'] ?? null;
-        } elseif (is_object($payloadMeta)) {
-            $sortSequence = $payloadMeta->sortSequence ?? null;
-        }
+        $sortSequence = $this->extractComparableSortSequence([
+            'payloadMeta' => $payloadMeta,
+        ]);
 
         return [
             'id' => $message->get('messageId') ?: $message->getId(),
@@ -453,7 +513,7 @@ class MessageDispatchService
         ];
     }
 
-    private function normalizeApiMessageForBroadcast(string $chatId, array $apiMessage, int $sortSequence): ?array
+    private function normalizeApiMessageForBroadcast(string $chatId, array $apiMessage, int $index): ?array
     {
         $messageId = $this->extractMessageId($apiMessage['id'] ?? $apiMessage['messageId'] ?? null);
 
@@ -469,6 +529,7 @@ class MessageDispatchService
 
         $fromMe = (bool) ($apiMessage['fromMe'] ?? false);
         $timestamp = $this->normalizeTimestampValue($apiMessage['timestamp'] ?? time());
+        $sortSequence = $this->buildHistorySortSequence($timestamp, $index);
         $payloadMeta = [
             'source' => 'getChatMessages',
             'type' => $apiMessage['type'] ?? null,
@@ -509,6 +570,34 @@ class MessageDispatchService
         return null;
     }
 
+    private function normalizePayloadMeta(array|object|null $payloadMeta): array
+    {
+        if (is_array($payloadMeta)) {
+            return $payloadMeta;
+        }
+
+        if (is_object($payloadMeta)) {
+            return get_object_vars($payloadMeta);
+        }
+
+        return [];
+    }
+
+    private function extractComparableSortSequence(array $message): ?int
+    {
+        $value = $message['sortSequence'] ?? $this->extractPayloadMetaValue($message['payloadMeta'] ?? null, 'sortSequence');
+
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        if (!is_numeric($value)) {
+            return null;
+        }
+
+        return (int) $value;
+    }
+
     private function extractMessageTimestamp(array $payload): ?int
     {
         $raw = $payload['timestamp'] ?? $payload['t'] ?? null;
@@ -541,22 +630,16 @@ class MessageDispatchService
 
     private function compareBroadcastMessages(array $a, array $b): int
     {
-        $sourceA = $this->extractPayloadMetaValue($a['payloadMeta'] ?? null, 'source');
-        $sourceB = $this->extractPayloadMetaValue($b['payloadMeta'] ?? null, 'source');
         $timeA = $this->normalizeTimestampValue($a['timestamp'] ?? time());
         $timeB = $this->normalizeTimestampValue($b['timestamp'] ?? time());
-        $seqA = isset($a['sortSequence']) ? (int) $a['sortSequence'] : 0;
-        $seqB = isset($b['sortSequence']) ? (int) $b['sortSequence'] : 0;
-
-        if ($sourceA === 'getChatMessages' && $sourceB === 'getChatMessages' && $seqA !== $seqB) {
-            return $seqA <=> $seqB;
-        }
+        $seqA = $this->extractComparableSortSequence($a);
+        $seqB = $this->extractComparableSortSequence($b);
 
         if ($timeA !== $timeB) {
             return $timeA <=> $timeB;
         }
 
-        if ($seqA !== $seqB) {
+        if ($seqA !== null && $seqB !== null && $seqA !== $seqB) {
             return $seqA <=> $seqB;
         }
 

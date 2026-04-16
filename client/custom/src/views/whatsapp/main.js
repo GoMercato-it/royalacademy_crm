@@ -306,12 +306,13 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 activeChatTab: 'all',
                 folderPanelOpen: false
             };
-            this.chatListCacheKey = 'wa-chat-list-cache-v1';
+            this.chatListCacheKey = 'wa-chat-list-cache-v2';
             this.chatListCacheTtl = 12 * 60 * 60 * 1000;
             this.chatsLoadedAt = 0;
             this.messageCacheByChat = {};
             this.chatRefreshTimer = null;
             this.contactRefreshTimer = null;
+            this.lazyContactsTimer = null;
             this.activeChatRefreshTimer = null;
             this.postLoginChatRetryTimer = null;
             this.chatRequestToken = null;
@@ -354,6 +355,11 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
 
             if (this.contactRefreshTimer) {
                 clearInterval(this.contactRefreshTimer);
+            }
+
+            if (this.lazyContactsTimer) {
+                clearTimeout(this.lazyContactsTimer);
+                this.lazyContactsTimer = null;
             }
 
             if (this.activeChatRefreshTimer) {
@@ -452,7 +458,40 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 return;
             }
 
-            this.messageCacheByChat[chatId] = messageList.slice(-300);
+            this.messageCacheByChat[chatId] = this.trimCachedMessages(messageList, 300);
+        }
+
+        buildPreviewMessageFromChat(chat) {
+            const lastMessage = chat && chat.lastMessage ? chat.lastMessage : null;
+
+            if (!lastMessage) {
+                return [];
+            }
+
+            const chatId = this.getChatId(chat);
+            const timestamp = this.getMessageTimestamp(lastMessage) || this.getLastMessageTimestamp(chat);
+            const messageId = this.getMessageIdentity(lastMessage) || `preview-${chatId}-${timestamp || Date.now()}`;
+            const body = String(lastMessage.body || lastMessage.caption || lastMessage.bodyPreview || this.getChatPreview(chat) || '');
+
+            if (!body) {
+                return [];
+            }
+
+            return [{
+                id: messageId,
+                messageId: messageId,
+                body: body,
+                bodyPreview: body,
+                chatId: chatId,
+                fromMe: !!lastMessage.fromMe,
+                timestamp: timestamp || Math.floor(Date.now() / 1000),
+                ack: lastMessage.ack || (lastMessage.fromMe ? 1 : 0),
+                status: lastMessage.fromMe ? 'Sent' : 'Received',
+                sortSequence: ((timestamp || 0) * 10000),
+                payloadMeta: {
+                    source: 'chatListPreview'
+                }
+            }];
         }
 
         async fetchStoredMessages(chatId, limit) {
@@ -469,26 +508,35 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
 
                 const list = Array.isArray(response.list) ? response.list.slice() : [];
 
-                return list.sort((a, b) => {
-                    const sequenceA = this.getSortSequence(a);
-                    const sequenceB = this.getSortSequence(b);
-
-                    if (sequenceA !== null && sequenceB !== null && sequenceA !== sequenceB) {
-                        return sequenceA - sequenceB;
-                    }
-
-                    return this.getMessageTimestamp(a) - this.getMessageTimestamp(b);
-                });
+                return this.sortMessageList(list);
             } catch (e) {
                 return [];
             }
         }
 
         mergeMessageList(existingList, incomingList) {
-            const result = [];
-            const indexMap = new Map();
+            const result = (existingList || []).map(message => Object.assign({}, message));
+            const newestFirst = this.isMessageListNewestFirst(result);
+            const rebuildIndexMap = () => {
+                const nextMap = new Map();
 
-            [...(existingList || []), ...(incomingList || [])].forEach(message => {
+                result.forEach((message, index) => {
+                    if (!message) {
+                        return;
+                    }
+
+                    const key = String(message.messageId || message.id || '');
+
+                    if (key) {
+                        nextMap.set(key, index);
+                    }
+                });
+
+                return nextMap;
+            };
+            let indexMap = rebuildIndexMap();
+
+            (incomingList || []).forEach(message => {
                 if (!message) {
                     return;
                 }
@@ -502,30 +550,46 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 }
 
                 if (key) {
+                    if (newestFirst) {
+                        result.unshift(normalized);
+                        indexMap = rebuildIndexMap();
+                        return;
+                    }
+
                     indexMap.set(key, result.length);
                 }
 
                 result.push(normalized);
             });
 
-            return result.sort((a, b) => {
-                const sequenceA = this.getSortSequence(a);
-                const sequenceB = this.getSortSequence(b);
+            return result;
+        }
 
-                if (sequenceA !== null && sequenceB !== null && sequenceA !== sequenceB) {
-                    return sequenceA - sequenceB;
-                }
+        isMessageListNewestFirst(list) {
+            if (!Array.isArray(list) || list.length < 2) {
+                return false;
+            }
 
-                return this.getMessageTimestamp(a) - this.getMessageTimestamp(b);
-            });
+            return this.getMessageTimestamp(list[0]) > this.getMessageTimestamp(list[list.length - 1]);
+        }
+
+        trimCachedMessages(list, maxSize) {
+            const normalizedList = Array.isArray(list) ? list.slice() : [];
+
+            if (!normalizedList.length || normalizedList.length <= maxSize) {
+                return normalizedList;
+            }
+
+            return this.isMessageListNewestFirst(normalizedList)
+                ? normalizedList.slice(0, maxSize)
+                : normalizedList.slice(-maxSize);
         }
 
         async loadInitial() {
-            const statusPromise = this.loadStatus();
-            this.loadContacts(true);
+            await this.loadStatus();
             this.loadChatFolders(true);
             await this.loadChats();
-            await statusPromise;
+            this.scheduleLazyContactsLoad(2500);
         }
 
         startTimers() {
@@ -542,7 +606,7 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                     return;
                 }
 
-                this.loadChatData(this.state.activeChatId, this.state.activeChatName, true);
+                this.refreshActiveChatMessages();
             }, 20000);
         }
 
@@ -585,14 +649,6 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                     this.state.chats = cached;
                     this.renderChatTabs();
                     this.renderChatList();
-
-                    if (!this.state.activeChatId) {
-                        const firstCachedChat = this.getVisibleChats()[0];
-
-                        if (firstCachedChat) {
-                            this.openChat(this.getChatId(firstCachedChat), this.getChatName(firstCachedChat));
-                        }
-                    }
                 }
             }
 
@@ -650,24 +706,10 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 const hasActiveChat = visibleChatList.some(chat => this.getChatId(chat) === this.state.activeChatId);
 
                 if (!hasActiveChat) {
-                    if (visibleChatList.length) {
-                        const firstVisibleChat = visibleChatList[0];
-
-                        this.openChat(this.getChatId(firstVisibleChat), this.getChatName(firstVisibleChat));
-                    } else {
-                        this.clearActiveChatState();
-                        this.renderAll();
-                    }
+                    this.clearActiveChatState();
+                    this.renderAll();
                 }
                 return;
-            }
-
-            if (visibleChatList.length) {
-                const firstChat = visibleChatList[0] || null;
-
-                if (firstChat) {
-                    this.openChat(this.getChatId(firstChat), this.getChatName(firstChat));
-                }
             }
         }
 
@@ -734,6 +776,24 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
             this.state.loadingContacts = false;
         }
 
+        scheduleLazyContactsLoad(delay) {
+            if (this.lazyContactsTimer || this.state.contacts.length) {
+                return;
+            }
+
+            this.lazyContactsTimer = setTimeout(() => {
+                this.lazyContactsTimer = null;
+                this.loadContacts(true).then(() => {
+                    this.renderChatList();
+
+                    if (this.state.activeChatId) {
+                        this.state.activeChatPhone = this.getChatPhone(this.findChatById(this.state.activeChatId)) || this.state.activeChatPhone;
+                        this.renderContext();
+                    }
+                });
+            }, delay || 3000);
+        }
+
         async loadChatFolders(silent) {
             try {
                 const response = await this.apiGet('WhatsApp/action/getChatFolders');
@@ -768,19 +828,27 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
         async loadChatData(chatId, chatName, silent) {
             const token = String(Date.now()) + ':' + Math.random();
             const cachedMessages = this.getCachedMessages(chatId);
+            const chat = this.findChatById(chatId);
+            const previewMessages = cachedMessages.length ? [] : this.buildPreviewMessageFromChat(chat);
+            const preserveCurrentMessages = silent &&
+                this.state.activeChatId === chatId &&
+                Array.isArray(this.state.messages) &&
+                this.state.messages.length;
 
             this.chatRequestToken = token;
             this.state.activeChatId = chatId;
             this.state.activeChatName = chatName || this.extractPhoneNumber(chatId);
-            this.state.activeChatPhone = this.getChatPhone(this.findChatById(chatId)) || this.state.activeChatPhone;
-            this.state.loadingMessages = !cachedMessages.length;
+            this.state.activeChatPhone = this.getChatPhone(chat) || this.state.activeChatPhone;
+            this.state.loadingMessages = !preserveCurrentMessages && !cachedMessages.length && !previewMessages.length;
             this.state.loadingHistory = !this.isGroupChat(chatId);
             this.state.loadingContext = true;
-            this.state.messages = cachedMessages.length ? cachedMessages : [];
+            this.state.messages = preserveCurrentMessages
+                ? this.state.messages.slice()
+                : (cachedMessages.length ? cachedMessages.slice() : previewMessages);
             this.state.conversations = [];
             this.state.chatContext = null;
 
-            if (!silent || cachedMessages.length) {
+            if (!silent || cachedMessages.length || previewMessages.length || preserveCurrentMessages) {
                 this.renderChatList();
                 this.renderMessages();
             }
@@ -792,15 +860,17 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
             this.loadChatContext(chatId, token);
 
             try {
-                const storedList = await this.fetchStoredMessages(chatId, 120);
+                const storedList = await this.fetchStoredMessages(chatId, 40);
 
                 if (this.chatRequestToken !== token) {
                     return;
                 }
 
-                if (storedList.length || !cachedMessages.length) {
+                if (storedList.length) {
                     this.state.messages = storedList;
                     this.saveCachedMessages(chatId, storedList);
+                } else if (!preserveCurrentMessages && !cachedMessages.length && previewMessages.length) {
+                    this.saveCachedMessages(chatId, previewMessages);
                 }
             } catch (e) {}
 
@@ -817,8 +887,9 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
 
             this.apiGet('WhatsApp/action/getChatMessages', {
                 chatId: chatId,
-                limit: 120,
-                refresh: true
+                limit: 40,
+                refresh: true,
+                sync: false
             }).then(response => {
                 if (this.chatRequestToken !== token) {
                     return;
@@ -830,10 +901,30 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                     return;
                 }
 
-                this.state.messages = list;
-                this.saveCachedMessages(chatId, list);
+                this.state.messages = list.slice();
+                this.saveCachedMessages(chatId, this.state.messages);
                 this.renderMessages();
             }).catch(() => {});
+        }
+
+        async refreshActiveChatMessages() {
+            const chatId = this.state.activeChatId;
+
+            if (!chatId) {
+                return;
+            }
+
+            try {
+                const storedList = await this.fetchStoredMessages(chatId, 40);
+
+                if (!storedList.length || this.state.activeChatId !== chatId) {
+                    return;
+                }
+
+                this.state.messages = storedList;
+                this.saveCachedMessages(chatId, storedList);
+                this.renderMessages();
+            } catch (e) {}
         }
 
         async loadChatContext(chatId, token) {
@@ -1091,9 +1182,8 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 return;
             }
 
-            const firstChat = visibleChatList[0];
-
-            await this.openChat(this.getChatId(firstChat), this.getChatName(firstChat));
+            this.clearActiveChatState();
+            this.renderAll();
         }
 
         renderAll() {
@@ -1602,16 +1692,7 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 return;
             }
 
-            const list = this.state.messages.slice().sort((a, b) => {
-                const sequenceA = this.getSortSequence(a);
-                const sequenceB = this.getSortSequence(b);
-
-                if (sequenceA !== null && sequenceB !== null && sequenceA !== sequenceB) {
-                    return sequenceA - sequenceB;
-                }
-
-                return this.getMessageTimestamp(a) - this.getMessageTimestamp(b);
-            });
+            const list = this.state.messages.slice();
 
             container.html(`
 <div class="wa-message-list">
@@ -1825,10 +1906,13 @@ ${candidateHtml}`);
             try {
                 const response = await this.apiGet('WhatsApp/action/getChatMessages', {
                     chatId: this.state.activeChatId,
-                    limit: 1000
+                    limit: 1000,
+                    mode: 'sync',
+                    refresh: true,
+                    sync: true
                 });
 
-                this.state.messages = Array.isArray(response.list) ? response.list : [];
+                this.state.messages = Array.isArray(response.list) ? response.list.slice() : [];
             } catch (e) {
                 Espo.Ui.error('Unable to load more WhatsApp messages for the selected dialogue.');
             }
@@ -2139,20 +2223,66 @@ ${candidateHtml}`);
             return typeof value === 'number' ? value : (Date.parse(value) / 1000 || 0);
         }
 
+        getMessageIdentity(message) {
+            if (!message) {
+                return '';
+            }
+
+            const value = message.messageId || message.id || '';
+
+            if (value && typeof value === 'object') {
+                return String(value._serialized || value.id || '');
+            }
+
+            return String(value);
+        }
+
         getSortSequence(message) {
             if (!message) {
                 return null;
             }
 
             if (message.sortSequence !== undefined && message.sortSequence !== null) {
-                return Number(message.sortSequence);
+                const value = Number(message.sortSequence);
+
+                return isNaN(value) ? null : value;
             }
 
             if (message.payloadMeta && message.payloadMeta.sortSequence !== undefined && message.payloadMeta.sortSequence !== null) {
-                return Number(message.payloadMeta.sortSequence);
+                const value = Number(message.payloadMeta.sortSequence);
+
+                return isNaN(value) ? null : value;
             }
 
             return null;
+        }
+
+        compareMessages(a, b) {
+            const timeDiff = this.getMessageTimestamp(a) - this.getMessageTimestamp(b);
+
+            if (timeDiff !== 0) {
+                return timeDiff;
+            }
+
+            const sequenceA = this.getSortSequence(a);
+            const sequenceB = this.getSortSequence(b);
+
+            if (sequenceA !== null && sequenceB !== null && sequenceA !== sequenceB) {
+                return sequenceA - sequenceB;
+            }
+
+            const idA = this.getMessageIdentity(a);
+            const idB = this.getMessageIdentity(b);
+
+            if (idA && idB && idA !== idB) {
+                return idA.localeCompare(idB);
+            }
+
+            return 0;
+        }
+
+        sortMessageList(list) {
+            return (list || []).slice().sort((a, b) => this.compareMessages(a, b));
         }
 
         extractPhoneNumber(chatId) {

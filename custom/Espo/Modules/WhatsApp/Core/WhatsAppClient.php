@@ -57,29 +57,49 @@ class WhatsAppClient
 
     public function getChatMessages(string $chatId, int $limit = 100, bool $allowSyncFallback = true): array
     {
-        $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", [
-            'chatId' => $chatId,
-            'searchOptions' => [
-                'limit' => $limit,
-            ],
-        ]);
-        $messages = $response['messages'] ?? $response['data'] ?? [];
+        $messages = $this->fetchChatMessagesBatch($chatId, $limit);
 
-        if ($allowSyncFallback && empty($messages)) {
+        if (!empty($messages)) {
+            return $messages;
+        }
+
+        $fallbackMessages = $this->fetchChatMessagesBatch($chatId);
+
+        if (!empty($fallbackMessages)) {
+            $this->log->warning('WhatsAppClient: Limited fetch returned empty, falling back to unrestricted chat batch.', [
+                'chatId' => $chatId,
+                'limit' => $limit,
+                'count' => count($fallbackMessages),
+            ]);
+
+            return $fallbackMessages;
+        }
+
+        if ($allowSyncFallback) {
             $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", [
                 'chatId' => $chatId,
             ]);
 
-            $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", [
-                'chatId' => $chatId,
-                'searchOptions' => [
+            $messages = $this->fetchChatMessagesBatch($chatId, $limit);
+
+            if (!empty($messages)) {
+                return $messages;
+            }
+
+            $fallbackMessages = $this->fetchChatMessagesBatch($chatId);
+
+            if (!empty($fallbackMessages)) {
+                $this->log->warning('WhatsAppClient: syncHistory did not restore limited fetch, using unrestricted chat batch.', [
+                    'chatId' => $chatId,
                     'limit' => $limit,
-                ],
-            ]);
-            $messages = $response['messages'] ?? $response['data'] ?? [];
+                    'count' => count($fallbackMessages),
+                ]);
+
+                return $fallbackMessages;
+            }
         }
 
-        return $messages;
+        return [];
     }
 
     public function getContacts(): array
@@ -126,6 +146,24 @@ class WhatsAppClient
         }
 
         return null;
+    }
+
+    private function fetchChatMessagesBatch(string $chatId, ?int $limit = null): array
+    {
+        $payload = [
+            'chatId' => $chatId,
+        ];
+
+        if ($limit !== null) {
+            $payload['searchOptions'] = [
+                'limit' => $limit,
+            ];
+        }
+
+        $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", $payload);
+        $messages = $response['messages'] ?? $response['data'] ?? [];
+
+        return is_array($messages) ? $messages : [];
     }
 
     private function makeRequest(string $method, string $endpoint, ?array $data = null): array

@@ -83,7 +83,7 @@ WhatsApp is not "just a widget" in this project anymore. A real deployment works
 - frontend widget code:
   - `client/custom/src/whatsapp-widget-init.js`
   - `client/custom/css/whatsapp-widget.css`
-- WhatsApp bridge service compatible with WAHA / `wwebjs`
+- WhatsApp bridge service based on the project-local `wwebjs-api` image
 - running Espo websocket daemon (`php websocket.php`)
 - reverse proxy rule for `/wss`
 - MinIO/S3-compatible object storage for avatars
@@ -122,7 +122,8 @@ Useful optional keys:
 
 If using the project-local bridge image strategy, also keep:
 
-- `.ddev/whatsapp-api-patches/patch-profile-pic.js`
+- `docker/whatsapp-api/Dockerfile`
+- `docker/whatsapp-api/patch-whatsapp-api-compat.js`
 
 ### Required MinIO Config
 
@@ -714,7 +715,7 @@ The checked-in runtime is DDEV-first.
 | --- | --- | --- |
 | `web` | main EspoCRM runtime | also runs websocket daemon |
 | `db` | MariaDB | managed by DDEV |
-| `whatsapp-api` | WAHA / WhatsApp bridge | listens on port `3000` internally |
+| `whatsapp-api` | project-local `wwebjs-api` bridge | listens on port `3000` internally |
 | `minio` | object storage for PDFs and WhatsApp avatars | exposes `9000` and `9001` |
 | `caddy` | dev VPS hostname proxy | enabled only in `dev` env |
 
