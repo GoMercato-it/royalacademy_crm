@@ -12,7 +12,8 @@ class WhatsAppClient
     public function __construct(
         private Config $config,
         private Log $log
-    ) {}
+    ) {
+    }
 
     public function getSessionId(): string
     {
@@ -55,51 +56,38 @@ class WhatsAppClient
         return $response['chats'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
     }
 
-    public function getChatMessages(string $chatId, int $limit = 100, bool $allowSyncFallback = true): array
+    public function getChatMessages(string $chatId, int $limit = 40, bool $allowSyncFallback = true, bool $forceSync = false): array
     {
-        $messages = $this->fetchChatMessagesBatch($chatId, $limit);
+        // Try to fetch in‑memory batch first (no limit = all cached messages)
+        $messages = $this->fetchChatMessagesBatch($chatId, null);
 
-        if (!empty($messages)) {
+        // If we have enough messages in RAM, or we explicitly do not want to sync, return what we have
+        if (!empty($messages) && (!$allowSyncFallback || count($messages) >= $limit)) {
+            if (count($messages) > $limit) {
+                $messages = array_slice($messages, -$limit);
+            }
             return $messages;
         }
 
-        $fallbackMessages = $this->fetchChatMessagesBatch($chatId);
-
-        if (!empty($fallbackMessages)) {
-            $this->log->warning('WhatsAppClient: Limited fetch returned empty, falling back to unrestricted chat batch.', [
-                'chatId' => $chatId,
-                'limit' => $limit,
-                'count' => count($fallbackMessages),
-            ]);
-
-            return $fallbackMessages;
+        // If we are not allowed to sync, just return whatever we have (may be empty)
+        if (!$allowSyncFallback) {
+            return $messages;
         }
 
-        if ($allowSyncFallback) {
-            $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", [
-                'chatId' => $chatId,
-            ]);
-
+        // If we need to force a sync (manual endpoint) or in‑memory was empty, try limited fetch
+        if ($forceSync || empty($messages)) {
+            $this->log->warning('WhatsAppClient: Forcing limited fetch.', ['chatId' => $chatId, 'limit' => $limit]);
             $messages = $this->fetchChatMessagesBatch($chatId, $limit);
-
             if (!empty($messages)) {
                 return $messages;
             }
-
-            $fallbackMessages = $this->fetchChatMessagesBatch($chatId);
-
-            if (!empty($fallbackMessages)) {
-                $this->log->warning('WhatsAppClient: syncHistory did not restore limited fetch, using unrestricted chat batch.', [
-                    'chatId' => $chatId,
-                    'limit' => $limit,
-                    'count' => count($fallbackMessages),
-                ]);
-
-                return $fallbackMessages;
-            }
         }
 
-        return [];
+        // If still empty, trigger full history sync
+        $this->log->warning('WhatsAppClient: Triggering full history sync.', ['chatId' => $chatId]);
+        $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", ['chatId' => $chatId]);
+        // One final attempt after sync
+        return $this->fetchChatMessagesBatch($chatId, $limit);
     }
 
     public function getContacts(): array
@@ -198,7 +186,7 @@ class WhatsAppClient
         $curlError = curl_error($ch);
 
         if ($curlError) {
-            $this->log->error('WhatsAppClient cURL Error: ' . $curlError);
+            $this->log->error("WhatsAppClient cURL Error ({$method} {$url}): " . $curlError);
 
             return ['success' => false, 'error' => $curlError];
         }

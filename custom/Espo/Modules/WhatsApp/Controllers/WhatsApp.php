@@ -144,7 +144,8 @@ class WhatsApp
         }
 
         try {
-            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit, $sync && empty($storedList));
+            $forceSync = filter_var($request->getQueryParam('forceSync') ?? false, FILTER_VALIDATE_BOOL);
+        $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit, $sync && empty($storedList), $forceSync);
 
             if (!empty($apiMessages)) {
                 $liveList = $this->messageDispatchService->getLiveMessages($chatId, $apiMessages);

@@ -46,7 +46,7 @@
         pollInterval: 1000,
         statusCheckInterval: 5000,
         chatListRefreshInterval: 15000,
-        chatListCacheKey: 'wa-chat-list-cache-v1',
+        chatListCacheKey: 'wa-widget-chat-list-cache-v1',
         chatListCacheTtl: 12 * 60 * 60 * 1000
     };
 

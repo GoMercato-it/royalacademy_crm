@@ -306,7 +306,7 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 activeChatTab: 'all',
                 folderPanelOpen: false
             };
-            this.chatListCacheKey = 'wa-chat-list-cache-v2';
+            this.chatListCacheKey = 'wa-main-chat-list-cache-v1';
             this.chatListCacheTtl = 12 * 60 * 60 * 1000;
             this.chatsLoadedAt = 0;
             this.messageCacheByChat = {};
@@ -314,6 +314,11 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
             this.contactRefreshTimer = null;
             this.lazyContactsTimer = null;
             this.activeChatRefreshTimer = null;
+            this.statusRefreshTimer = null;
+            this.realtimeChatRefreshTimer = null;
+            this.webSocketManager = null;
+            this.webSocketHandler = null;
+            this.realtimeSubscribed = false;
             this.postLoginChatRetryTimer = null;
             this.chatRequestToken = null;
             this.historyRequestToken = null;
@@ -346,6 +351,7 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
             this.ensureQrLib().catch(() => {});
             this.loadInitial();
             this.startTimers();
+            this.subscribeToRealTime();
         }
 
         onRemove() {
@@ -366,6 +372,15 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 clearInterval(this.activeChatRefreshTimer);
             }
 
+            if (this.statusRefreshTimer) {
+                clearInterval(this.statusRefreshTimer);
+            }
+
+            if (this.realtimeChatRefreshTimer) {
+                clearTimeout(this.realtimeChatRefreshTimer);
+                this.realtimeChatRefreshTimer = null;
+            }
+
             if (this.postLoginChatRetryTimer) {
                 clearTimeout(this.postLoginChatRetryTimer);
                 this.postLoginChatRetryTimer = null;
@@ -379,6 +394,8 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 clearTimeout(this.qrPollTimeout);
                 this.qrPollTimeout = null;
             }
+
+            this.unsubscribeFromRealTime();
         }
 
         ensureStyles() {
@@ -405,6 +422,199 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
 
         apiPost(url, data) {
             return Espo.Ajax.postRequest(url, data || {});
+        }
+
+        getWebSocketLocationParts() {
+            const protocolPart = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+            let url = window.location.host;
+
+            if (protocolPart === 'wss://') {
+                url += '/wss';
+            }
+
+            return {protocolPart, url};
+        }
+
+        getStoredWebSocketAuth() {
+            let auth = window.localStorage.getItem('espo-user-auth') || window.sessionStorage.getItem('espo-user-auth') || '';
+            let userId = window.localStorage.getItem('espo-user-lastUserId') || window.sessionStorage.getItem('espo-user-lastUserId') || 'system';
+
+            if (auth && auth.charAt(0) === '"') {
+                try {
+                    auth = JSON.parse(auth);
+                } catch (e) {}
+            }
+
+            if (userId && userId.charAt(0) === '"') {
+                try {
+                    userId = JSON.parse(userId);
+                } catch (e) {}
+            }
+
+            return {auth, userId};
+        }
+
+        ensureMainWebSocketManager() {
+            return new Promise((resolve, reject) => {
+                if (this.webSocketManager) {
+                    resolve(this.webSocketManager);
+                    return;
+                }
+
+                if (typeof Espo === 'undefined' || !Espo.loader || !Espo.loader.require) {
+                    reject(new Error('Espo loader not available'));
+                    return;
+                }
+
+                Espo.loader.require('di', diModule => {
+                    Espo.loader.require('web-socket-manager', WebSocketManagerModule => {
+                        try {
+                            const WebSocketManagerClass =
+                                (WebSocketManagerModule && WebSocketManagerModule.default) || WebSocketManagerModule;
+                            const container = diModule && diModule.container;
+
+                            if (!container || !container.get || !WebSocketManagerClass) {
+                                reject(new Error('Espo DI webSocketManager is unavailable'));
+                                return;
+                            }
+
+                            const manager = container.get(WebSocketManagerClass);
+
+                            if (!manager) {
+                                reject(new Error('Espo webSocketManager instance not found'));
+                                return;
+                            }
+
+                            this.webSocketManager = manager;
+                            resolve(manager);
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+                });
+            });
+        }
+
+        subscribeToRealTime() {
+            if (this.realtimeSubscribed) {
+                return;
+            }
+
+            this.ensureMainWebSocketManager()
+                .then(manager => {
+                    const locationParts = this.getWebSocketLocationParts();
+                    const authState = this.getStoredWebSocketAuth();
+                    const shouldReconnect =
+                        manager.protocolPart !== locationParts.protocolPart ||
+                        manager.url !== locationParts.url;
+
+                    manager.protocolPart = locationParts.protocolPart;
+                    manager.url = locationParts.url;
+
+                    const isEnabled = typeof manager.isEnabled === 'function' ? manager.isEnabled() : true;
+
+                    if (typeof manager.setEnabled === 'function' && !isEnabled) {
+                        manager.setEnabled();
+                    }
+
+                    if (shouldReconnect && manager.connection && !manager.isConnected) {
+                        manager.connection = null;
+                        manager.isConnecting = false;
+                    }
+
+                    if (!manager.connection && authState.auth && authState.userId) {
+                        manager.connect(authState.auth, authState.userId);
+                    } else if (!manager.isConnected && !manager.isConnecting && authState.auth && authState.userId) {
+                        manager.connect(authState.auth, authState.userId);
+                    }
+
+                    if (!this.webSocketHandler) {
+                        this.webSocketHandler = (topic, data) => this.handleRealtimeEvent(topic, data);
+                    }
+
+                    manager.unsubscribe('WhatsApp', this.webSocketHandler);
+                    manager.subscribe('WhatsApp', this.webSocketHandler);
+                    this.realtimeSubscribed = true;
+                })
+                .catch(error => {
+                    console.warn('WhatsApp main: failed to attach to Espo webSocketManager', error);
+                });
+        }
+
+        unsubscribeFromRealTime() {
+            if (!this.webSocketManager || !this.webSocketHandler) {
+                return;
+            }
+
+            try {
+                this.webSocketManager.unsubscribe('WhatsApp', this.webSocketHandler);
+            } catch (e) {}
+
+            this.realtimeSubscribed = false;
+        }
+
+        handleRealtimeEvent(topic, data) {
+            if (typeof topic === 'string' && topic !== 'WhatsApp') {
+                return;
+            }
+
+            let payload = typeof topic === 'object' && !data ? topic : data;
+
+            if (typeof payload === 'string') {
+                try {
+                    payload = JSON.parse(payload);
+                } catch (e) {
+                    return;
+                }
+            }
+
+            if (!payload || !payload.action) {
+                return;
+            }
+
+            const eventData = payload.data || payload;
+            const chatId = payload.chatId || (eventData && eventData.chatId);
+
+            if (eventData && chatId && !eventData.chatId) {
+                eventData.chatId = chatId;
+            }
+
+            if (payload.action === 'message') {
+                this.applyRealtimeMessage(eventData);
+                return;
+            }
+
+            if (payload.action === 'message_ack') {
+                this.applyRealtimeAck(eventData, chatId);
+                return;
+            }
+
+            if (payload.action === 'conversation' && chatId && chatId === this.state.activeChatId) {
+                this.loadConversationHistory(chatId, this.chatRequestToken);
+                return;
+            }
+
+            if (payload.action === 'lifecycle') {
+                const wasConnected = this.state.isConnected;
+                const nextStatus = eventData && eventData.state ? eventData.state : this.state.status;
+
+                this.state.status = nextStatus;
+                this.state.isConnected = this.isConnectedStatus(nextStatus);
+                this.renderStatus();
+
+                if (this.state.isConnected && !wasConnected) {
+                    this.scheduleRealtimeChatRefresh(250);
+                }
+            }
+        }
+
+        isConnectedStatus(status) {
+            const value = String(status || '').toLowerCase();
+
+            return value === 'connected' ||
+                value === 'authenticated' ||
+                value === 'ready' ||
+                value === 'open';
         }
 
         getChatListCache() {
@@ -593,6 +803,20 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
         }
 
         startTimers() {
+            this.statusRefreshTimer = setInterval(() => {
+                if (document.hidden) {
+                    return;
+                }
+
+                const wasConnected = this.state.isConnected;
+
+                this.loadStatus().then(() => {
+                    if (this.state.isConnected && (!wasConnected || !this.state.chats.length)) {
+                        this.loadChats(true, {forceRefresh: true});
+                    }
+                });
+            }, 10000);
+
             this.chatRefreshTimer = setInterval(() => {
                 this.loadChats(true);
             }, 15000);
@@ -614,13 +838,19 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
             options = options || {};
 
             if (options.forceChats) {
-                await this.loadContacts(true);
-                await this.loadChatFolders(true);
-                await this.loadChats(true, {forceRefresh: true});
+                // Load contacts, folders, and chats in parallel for faster startup
+                await Promise.all([
+                    this.loadContacts(true),
+                    this.loadChatFolders(true),
+                    this.loadChats(true, {forceRefresh: true})
+                ]);
             }
 
+            // Defer loading of the active chat's messages to avoid blocking the main UI render
             if (this.state.activeChatId) {
-                await this.loadChatData(this.state.activeChatId, this.state.activeChatName, true);
+                setTimeout(() => {
+                    this.loadChatData(this.state.activeChatId, this.state.activeChatName, true);
+                }, 0);
             }
         }
 
@@ -670,9 +900,14 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
 
             try {
                 const response = await this.apiGet('WhatsApp/action/getChats', forceRefresh ? {refresh: true} : {});
-                this.state.chats = Array.isArray(response.list) ? response.list : [];
+                const list = Array.isArray(response.list) ? response.list : [];
+
+                if (list.length || !this.state.chats.length) {
+                    this.state.chats = list;
+                    this.saveChatListCache(this.state.chats);
+                }
+
                 this.chatsLoadedAt = Date.now();
-                this.saveChatListCache(this.state.chats);
 
                 if (
                     !forceRefresh &&
@@ -755,6 +990,132 @@ define('custom:views/whatsapp/main', ['view'], function (View) {
                 });
 
             return this.chatLiveRefreshPromise;
+        }
+
+        scheduleRealtimeChatRefresh(delay) {
+            if (this.realtimeChatRefreshTimer) {
+                clearTimeout(this.realtimeChatRefreshTimer);
+            }
+
+            this.realtimeChatRefreshTimer = setTimeout(() => {
+                this.realtimeChatRefreshTimer = null;
+
+                if (!this.state.isConnected) {
+                    return;
+                }
+
+                this.loadChats(true, {forceRefresh: true});
+            }, delay || 800);
+        }
+
+        applyRealtimeMessage(message) {
+            if (!message) {
+                return;
+            }
+
+            if (!this.state.isConnected) {
+                this.state.status = 'connected';
+                this.state.isConnected = true;
+                this.renderStatus();
+            }
+
+            const chatId = message.chatId || message.from || message.to || null;
+
+            if (!chatId) {
+                return;
+            }
+
+            this.upsertChatPreviewFromMessage(chatId, message);
+
+            if (this.state.activeChatId === chatId) {
+                this.state.messages = this.sortMessageList(this.mergeMessageList(this.state.messages, [message]));
+                this.saveCachedMessages(chatId, this.state.messages);
+                this.renderMessages();
+
+                if (!this.isGroupChat(chatId)) {
+                    this.loadConversationHistory(chatId, this.chatRequestToken);
+                }
+            }
+
+            this.scheduleRealtimeChatRefresh();
+        }
+
+        applyRealtimeAck(ackData, chatId) {
+            if (!ackData || !chatId || this.state.activeChatId !== chatId) {
+                return;
+            }
+
+            const ackId = this.getMessageIdentity(ackData);
+
+            if (!ackId) {
+                return;
+            }
+
+            let changed = false;
+
+            this.state.messages = (this.state.messages || []).map(message => {
+                if (this.getMessageIdentity(message) !== ackId) {
+                    return message;
+                }
+
+                changed = true;
+
+                return Object.assign({}, message, {
+                    ack: ackData.ack,
+                    status: ackData.status || message.status
+                });
+            });
+
+            if (changed) {
+                this.saveCachedMessages(chatId, this.state.messages);
+                this.renderMessages();
+            }
+        }
+
+        upsertChatPreviewFromMessage(chatId, message) {
+            const list = (this.state.chats || []).slice();
+            const index = list.findIndex(chat => this.getChatId(chat) === chatId);
+            const timestamp = this.getMessageTimestamp(message) || Math.floor(Date.now() / 1000);
+            const lastMessage = Object.assign({}, message, {
+                chatId: chatId,
+                timestamp: timestamp
+            });
+            const shouldIncreaseUnread =
+                !message.fromMe &&
+                this.state.activeChatId !== chatId;
+
+            if (index >= 0) {
+                const current = Object.assign({}, list[index]);
+
+                current.lastMessage = lastMessage;
+                current.timestamp = timestamp;
+                current.unreadCount = shouldIncreaseUnread ? Number(current.unreadCount || 0) + 1 : current.unreadCount;
+                list[index] = current;
+            } else {
+                list.push({
+                    id: chatId,
+                    chatId: chatId,
+                    name: this.extractPhoneNumber(chatId),
+                    timestamp: timestamp,
+                    unreadCount: shouldIncreaseUnread ? 1 : 0,
+                    isGroup: this.isGroupChat(chatId),
+                    lastMessage: lastMessage
+                });
+            }
+
+            this.state.chats = this.sortChatsByTimestamp(list);
+            this.saveChatListCache(this.state.chats);
+            this.renderChatTabs();
+            this.renderChatList();
+        }
+
+        sortChatsByTimestamp(list) {
+            return (list || []).slice().sort((a, b) => {
+                const timestampA = this.getLastMessageTimestamp(a) || Number(a && a.timestamp || 0);
+                const timestampB = this.getLastMessageTimestamp(b) || Number(b && b.timestamp || 0);
+
+                return timestampB - timestampA;
+            });
         }
 
         async loadContacts(silent) {
