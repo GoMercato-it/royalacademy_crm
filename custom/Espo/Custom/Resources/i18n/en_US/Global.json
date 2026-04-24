@@ -11,5 +11,10 @@
         "CourseSection": "CourseSections",
         "CourseAccess": "CourseAccesss",
         "Student": "Students"
+    },
+    "options": {
+        "phoneNumber": {
+            "WhatsApp": "WhatsApp"
+        }
     }
 }

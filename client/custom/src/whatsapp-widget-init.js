@@ -32,8 +32,12 @@
         subscribed: false,
         webSocketManager: null,
         webSocketHandler: null,
+        wsSubscribing: false,
+        wsRetryTimer: null,
+        wsRetryDelay: 2000,
         wsTopicUri: null,
         wsRetryCount: 0,
+        messagePollingActive: false,
         messageSortCounter: 0,
         chatRequestToken: null,
         messageCacheByChat: {},
@@ -46,6 +50,7 @@
         pollInterval: 1000,
         statusCheckInterval: 5000,
         chatListRefreshInterval: 15000,
+        messageRefreshInterval: 7000,
         chatListCacheKey: 'wa-widget-chat-list-cache-v1',
         chatListCacheTtl: 12 * 60 * 60 * 1000
     };
@@ -1201,6 +1206,8 @@
 
         if (name !== 'chat') {
             stopMessagePolling();
+        } else {
+            startMessagePolling();
         }
     }
 
@@ -1228,6 +1235,11 @@
             }
 
             if (isConnected) {
+                if (!isRealtimeConnected()) {
+                    state.subscribed = false;
+                    subscribeToRealTime();
+                }
+
                 var loginScreen = _$('wa-screen-login');
                 if (state.screen === 'login' || (loginScreen && loginScreen.classList.contains('active'))) {
                     showScreen('chatList');
@@ -1287,6 +1299,10 @@
         if (logoutBtn) logoutBtn.style.display = connected ? 'block' : 'none';
     }
 
+    function isRealtimeConnected() {
+        return !!(state.webSocketManager && state.webSocketManager.isConnected);
+    }
+
     function startPolling() {
         stopPolling();
         state.statusInterval = setInterval(checkStatus, config.statusCheckInterval);
@@ -1295,17 +1311,28 @@
     function stopPolling() {
         if (state.statusInterval) { clearInterval(state.statusInterval); state.statusInterval = null; }
         if (state.chatInterval) { clearInterval(state.chatInterval); state.chatInterval = null; }
+        if (state.wsRetryTimer) { clearTimeout(state.wsRetryTimer); state.wsRetryTimer = null; }
         stopMessagePolling();
     }
 
     function startChatListPolling() {
-        return;
+        if (state.chatInterval) return;
+
+        state.chatInterval = setInterval(function() {
+            if (!state.isOpen || state.screen !== 'chatList' || !state.isConnected) return;
+
+            if (isRealtimeConnected() && state.chats.length) return;
+
+            loadChats({silent: true, force: true});
+        }, config.chatListRefreshInterval);
     }
 
     /* ── WebSocket Real-Time Subscription ───────────────────────── */
     /* ── WebSocket Real-Time Subscription ───────────────────────── */
     function subscribeToRealTime() {
-        if (state.subscribed) return;
+        if (state.subscribed || state.wsSubscribing) return;
+
+        state.wsSubscribing = true;
 
         ensureWidgetWebSocketManager().then(function(manager) {
             var locationParts = getWebSocketLocationParts();
@@ -1318,7 +1345,9 @@
             manager.protocolPart = locationParts.protocolPart;
             manager.url = locationParts.url;
 
-            if (typeof manager.setEnabled === 'function' && !manager.isEnabled()) {
+            var isEnabled = typeof manager.isEnabled === 'function' ? manager.isEnabled() : true;
+
+            if (typeof manager.setEnabled === 'function' && !isEnabled) {
                 manager.setEnabled();
             }
 
@@ -1372,23 +1401,43 @@
             }
             manager.subscribe('WhatsApp', state.webSocketHandler);
             state.subscribed = true;
+            state.wsSubscribing = false;
+            state.wsRetryDelay = 2000;
 
-            if (state.statusInterval && state.isConnected) {
-                clearInterval(state.statusInterval);
-                state.statusInterval = null;
-            }
-            stopMessagePolling();
-            if (state.chatInterval) {
-                clearInterval(state.chatInterval);
-                state.chatInterval = null;
+            if (state.wsRetryTimer) {
+                clearTimeout(state.wsRetryTimer);
+                state.wsRetryTimer = null;
             }
         }).catch(function(error) {
+            state.wsSubscribing = false;
             console.warn('WA Widget: Failed to attach to Espo webSocketManager', error);
+            scheduleWebSocketRetry();
         });
     }
 
+    function scheduleWebSocketRetry() {
+        if (state.subscribed || state.wsSubscribing || state.wsRetryTimer) return;
+
+        var delay = state.wsRetryDelay || 2000;
+
+        state.wsRetryTimer = setTimeout(function() {
+            state.wsRetryTimer = null;
+            state.wsRetryDelay = Math.min(30000, Math.round((state.wsRetryDelay || 2000) * 1.6));
+            subscribeToRealTime();
+        }, delay);
+    }
+
     function startMessagePolling() {
-        return;
+        if (state.messagePollInterval) return;
+
+        state.messagePollingActive = true;
+        state.messagePollInterval = setInterval(function() {
+            if (!state.isOpen || state.screen !== 'chat' || !state.chatId || !state.isConnected) return;
+
+            if (isRealtimeConnected()) return;
+
+            pollMessages();
+        }, config.messageRefreshInterval);
     }
 
     function pollMessages() {

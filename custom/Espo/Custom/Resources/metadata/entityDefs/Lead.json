@@ -25,6 +25,9 @@
                 "Dead"
             ],
             "required": true
+        },
+        "phoneNumber": {
+            "typeList": ["Mobile", "Office", "Home", "Fax", "Other", "WhatsApp"]
         }
     }
 }

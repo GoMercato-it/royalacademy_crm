@@ -58,35 +58,19 @@ class WhatsAppClient
 
     public function getChatMessages(string $chatId, int $limit = 40, bool $allowSyncFallback = true, bool $forceSync = false): array
     {
-        // Try to fetch in‑memory batch first (no limit = all cached messages)
-        $messages = $this->fetchChatMessagesBatch($chatId, null);
+        $limit = max(1, min(200, $limit));
 
-        // If we have enough messages in RAM, or we explicitly do not want to sync, return what we have
-        if (!empty($messages) && (!$allowSyncFallback || count($messages) >= $limit)) {
-            if (count($messages) > $limit) {
-                $messages = array_slice($messages, -$limit);
-            }
-            return $messages;
+        if ($allowSyncFallback || $forceSync) {
+            $this->log->warning('WhatsAppClient: syncHistory fallback is disabled for UI message requests.', [
+                'chatId' => $chatId,
+                'limit' => $limit,
+                'allowSyncFallback' => $allowSyncFallback,
+                'forceSync' => $forceSync,
+            ]);
         }
 
-        // If we are not allowed to sync, just return whatever we have (may be empty)
-        if (!$allowSyncFallback) {
-            return $messages;
-        }
-
-        // If we need to force a sync (manual endpoint) or in‑memory was empty, try limited fetch
-        if ($forceSync || empty($messages)) {
-            $this->log->warning('WhatsAppClient: Forcing limited fetch.', ['chatId' => $chatId, 'limit' => $limit]);
-            $messages = $this->fetchChatMessagesBatch($chatId, $limit);
-            if (!empty($messages)) {
-                return $messages;
-            }
-        }
-
-        // If still empty, trigger full history sync
-        $this->log->warning('WhatsAppClient: Triggering full history sync.', ['chatId' => $chatId]);
-        $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", ['chatId' => $chatId]);
-        // One final attempt after sync
+        // Keep UI requests bounded. An unbounded fetch serializes the full in-memory
+        // WhatsApp chat and can block the Node bridge on large conversations.
         return $this->fetchChatMessagesBatch($chatId, $limit);
     }
 
@@ -95,6 +79,38 @@ class WhatsAppClient
         $response = $this->makeRequest('GET', "/client/getContacts/{$this->sessionId}");
 
         return $response['contacts'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
+    }
+
+    /**
+     * @param string[] $userIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function getContactLidAndPhone(array $userIds): array
+    {
+        $userIds = array_values(array_unique(array_filter(array_map(
+            fn ($id) => trim((string) $id),
+            $userIds
+        ))));
+
+        if ($userIds === []) {
+            return [];
+        }
+
+        $result = [];
+
+        foreach (array_chunk($userIds, 100) as $chunk) {
+            $response = $this->makeRequest('POST', "/client/getContactLidAndPhone/{$this->sessionId}", [
+                'userIds' => $chunk,
+            ]);
+
+            $data = $response['data'] ?? $response['result'] ?? [];
+
+            if (is_array($data)) {
+                $result = array_merge($result, $data);
+            }
+        }
+
+        return $result;
     }
 
     public function sendMessage(string $chatId, string $message): array

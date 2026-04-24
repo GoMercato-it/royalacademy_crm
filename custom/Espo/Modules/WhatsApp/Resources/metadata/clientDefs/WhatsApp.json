@@ -1,5 +1,8 @@
 {
   "controller": "custom:controllers/whatsapp",
+  "views": {
+    "list": "custom:views/whatsapp/main-vue-container"
+  },
   "menu": {
     "handler": false
   }

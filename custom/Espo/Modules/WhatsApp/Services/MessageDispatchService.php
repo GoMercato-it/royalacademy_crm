@@ -267,19 +267,28 @@ class MessageDispatchService
         }
 
         $storedSource = $this->extractPayloadMetaValue($payloadMeta, 'source');
+        $existingConversationId = trim((string) ($data['conversationId'] ?? $entity->get('conversationId') ?? ''));
+        $conversation = null;
 
-        $conversation = $this->conversationTrackingService->touchConversation(
-            $sessionId,
-            $chatId,
-            $timestamp,
-            [
-                'bodyPreview' => $bodyPreview,
-                'fromMe' => $fromMe,
-                'source' => $storedSource,
-                'incrementMessageCount' => $isNewEntity ? 1 : 0,
-            ]
-        );
-        $conversationId = $data['conversationId'] ?? $conversation->getId();
+        if (!$isNewEntity && $existingConversationId !== '') {
+            $conversation = $this->entityManager->getEntityById('WhatsAppConversation', $existingConversationId);
+        }
+
+        if (!$conversation) {
+            $conversation = $this->conversationTrackingService->touchConversation(
+                $sessionId,
+                $chatId,
+                $timestamp,
+                [
+                    'bodyPreview' => $bodyPreview,
+                    'fromMe' => $fromMe,
+                    'source' => $storedSource,
+                    'incrementMessageCount' => $isNewEntity ? 1 : 0,
+                ]
+            );
+        }
+
+        $conversationId = $conversation->getId() ?: $existingConversationId;
 
         $entity->set([
             'body' => $body,

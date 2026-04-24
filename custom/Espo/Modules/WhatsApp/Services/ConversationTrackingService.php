@@ -4,6 +4,8 @@ namespace Espo\Modules\WhatsApp\Services;
 
 use Espo\Core\Utils\Config;
 use Espo\Core\Utils\Log;
+use Espo\Core\PhoneNumber\Sanitizer as PhoneNumberSanitizer;
+use Espo\Entities\PhoneNumber as PhoneNumberEntity;
 use Espo\Tools\PhoneNumber\EntityLookup as PhoneNumberEntityLookup;
 use Espo\ORM\Entity;
 use Espo\ORM\EntityManager;
@@ -12,6 +14,7 @@ class ConversationTrackingService
 {
     private const DEFAULT_TIMEOUT_SECONDS = 1200;
     private const AUTO_LINK_ENTITY_TYPE_LIST = ['Contact', 'Lead', 'Account'];
+    private const WHATSAPP_PHONE_TYPE = 'WhatsApp';
     private const AUTO_LINK_ENTITY_PRIORITY_MAP = [
         'Contact' => 1,
         'Lead' => 2,
@@ -22,6 +25,7 @@ class ConversationTrackingService
         private EntityManager $entityManager,
         private WebSocketService $webSocketService,
         private PhoneNumberEntityLookup $phoneNumberEntityLookup,
+        private PhoneNumberSanitizer $phoneNumberSanitizer,
         private Config $config,
         private Log $log
     ) {
@@ -155,13 +159,31 @@ class ConversationTrackingService
                 'chatId' => $chatId,
             ])
             ->order('startedAt', 'DESC')
-            ->limit($limit)
+            ->limit(min(100, $limit * 4))
             ->find();
 
         $list = [];
+        $byKey = [];
 
         foreach ($collection as $conversation) {
-            $list[] = $this->normalizeConversation($conversation);
+            $item = $this->normalizeConversation($conversation);
+
+            if ($this->shouldSkipHistoryConversation($item)) {
+                continue;
+            }
+
+            $key = $this->getHistoryConversationKey($item);
+
+            if (!isset($byKey[$key]) || $this->isBetterHistoryConversation($item, $byKey[$key])) {
+                $byKey[$key] = $item;
+            }
+        }
+
+        $list = array_values($byKey);
+        usort($list, static fn (array $a, array $b): int => ((int) ($b['startedAt'] ?? 0)) <=> ((int) ($a['startedAt'] ?? 0)));
+
+        if (count($list) > $limit) {
+            $list = array_slice($list, 0, $limit);
         }
 
         return $list;
@@ -179,7 +201,7 @@ class ConversationTrackingService
             'participantWaId' => $participantWaId,
             'normalizedPhone' => $normalizedPhone,
             'displayPhone' => $this->formatDisplayPhone($normalizedPhone),
-            'displayName' => $normalizedPhone !== '' ? $this->formatDisplayPhone($normalizedPhone) : null,
+            'displayName' => null,
             'contactLinkId' => null,
             'linkedEntityType' => null,
             'linkedEntityId' => null,
@@ -203,8 +225,11 @@ class ConversationTrackingService
         $linkedEntityType = (string) ($contactLink->get('linkedEntityType') ?? '');
         $linkedEntityId = (string) ($contactLink->get('linkedEntityId') ?? '');
         $linkedEntityName = $this->resolveEntityDisplayName($linkedEntityType, $linkedEntityId);
-        $linkedEntityPhone = $this->resolveEntityPhoneNumber($linkedEntityType, $linkedEntityId);
-        $displayPhone = $this->formatDisplayPhone($normalizedPhone) ?: $linkedEntityPhone;
+        $linkedEntityPhone = $this->resolveEntityPhoneNumber($linkedEntityType, $linkedEntityId, $participantWaId);
+        $storedPhone = trim((string) ($contactLink->get('normalizedPhone') ?? ''));
+        $normalizedPhone = $normalizedPhone !== '' ? $normalizedPhone : $storedPhone;
+        $displayPhone = $this->formatDisplayPhone($normalizedPhone);
+
         $displayName = $this->resolveChatDisplayName(
             (string) ($contactLink->get('displayName') ?? ''),
             $linkedEntityName,
@@ -227,6 +252,7 @@ class ConversationTrackingService
             'linkedEntityType' => $linkedEntityType ?: null,
             'linkedEntityId' => $linkedEntityId ?: null,
             'linkedEntityName' => $linkedEntityName ?: null,
+            'linkedEntityPhone' => $linkedEntityPhone,
             'linkedEntityUrl' => ($linkedEntityType && $linkedEntityId) ? '#' . $linkedEntityType . '/view/' . $linkedEntityId : null,
             'isLinked' => $linkedEntityType !== '' && $linkedEntityId !== '',
             'isAmbiguous' => count($candidateList) > 1,
@@ -264,7 +290,7 @@ class ConversationTrackingService
         ]);
 
         if ($normalizedPhone !== '') {
-            $contact->set('phoneNumber', $normalizedPhone);
+            $this->applyWhatsAppPhoneNumber($contact, $normalizedPhone);
         }
 
         $this->entityManager->saveEntity($contact);
@@ -327,12 +353,13 @@ class ConversationTrackingService
     private function closeConversation(Entity $conversation, int $timestamp): void
     {
         $startedAtTimestamp = strtotime((string) ($conversation->get('startedAt') ?? '')) ?: $timestamp;
-        $endedAt = date('Y-m-d H:i:s', $timestamp);
+        $endedTimestamp = max($timestamp, $startedAtTimestamp);
+        $endedAt = date('Y-m-d H:i:s', $endedTimestamp);
 
         $conversation->set([
             'status' => 'closed',
             'endedAt' => $endedAt,
-            'durationSeconds' => max(0, $timestamp - $startedAtTimestamp),
+            'durationSeconds' => max(0, $endedTimestamp - $startedAtTimestamp),
         ]);
 
         $this->entityManager->saveEntity($conversation);
@@ -345,7 +372,7 @@ class ConversationTrackingService
                     'chatId' => $conversation->get('chatId'),
                     'sessionId' => $conversation->get('sessionId'),
                     'status' => 'closed',
-                    'endedAt' => $timestamp,
+                    'endedAt' => $endedTimestamp,
                 ]
             );
         } catch (\Throwable $e) {
@@ -360,7 +387,7 @@ class ConversationTrackingService
         return $entity?->getId();
     }
 
-    private function findContactLinkEntity(string $participantWaId, string $knownPhone = ''): ?Entity
+    private function findContactLinkEntity(string $participantWaId, string $knownPhone = '', bool $autoLink = false): ?Entity
     {
         if ($participantWaId === '') {
             return null;
@@ -370,7 +397,7 @@ class ConversationTrackingService
         $entity = $repository->where(['waId' => $participantWaId])->findOne();
 
         if ($entity) {
-            return $this->resolvePendingContactLink($participantWaId, $entity, $knownPhone);
+            return $this->resolvePendingContactLink($participantWaId, $entity, $knownPhone, $autoLink);
         }
 
         $normalizedPhone = $knownPhone !== '' ? $knownPhone : $this->extractNormalizedPhone($participantWaId);
@@ -382,7 +409,11 @@ class ConversationTrackingService
         $entity = $repository->where(['normalizedPhone' => $normalizedPhone])->findOne();
 
         if ($entity) {
-            return $this->resolvePendingContactLink($participantWaId, $entity, $normalizedPhone);
+            return $this->resolvePendingContactLink($participantWaId, $entity, $normalizedPhone, $autoLink);
+        }
+
+        if (!$autoLink) {
+            return null;
         }
 
         $candidateList = $this->findLinkedEntityCandidates($normalizedPhone);
@@ -403,7 +434,12 @@ class ConversationTrackingService
         );
     }
 
-    private function resolvePendingContactLink(string $participantWaId, Entity $contactLink, string $knownPhone = ''): Entity
+    private function resolvePendingContactLink(
+        string $participantWaId,
+        Entity $contactLink,
+        string $knownPhone = '',
+        bool $autoLink = false
+    ): Entity
     {
         $linkedEntityType = trim((string) ($contactLink->get('linkedEntityType') ?? ''));
         $linkedEntityId = trim((string) ($contactLink->get('linkedEntityId') ?? ''));
@@ -423,7 +459,10 @@ class ConversationTrackingService
         if ($normalizedPhone !== '' && $normalizedPhone !== $storedNormalizedPhone) {
             $contactLink->set('normalizedPhone', $normalizedPhone);
             $this->entityManager->saveEntity($contactLink);
-            $this->synchronizeLinkedEntityPhone($contactLink, $storedNormalizedPhone, $normalizedPhone, $participantWaId);
+        }
+
+        if (!$autoLink) {
+            return $contactLink;
         }
 
         $candidateList = $this->findLinkedEntityCandidates($normalizedPhone);
@@ -452,30 +491,37 @@ class ConversationTrackingService
         }
 
         $candidateMap = [];
+        $addCandidate = function (Entity $entity) use (&$candidateMap): void {
+            $entityType = $entity->getEntityType();
+
+            if (!in_array($entityType, self::AUTO_LINK_ENTITY_TYPE_LIST, true)) {
+                return;
+            }
+
+            $entityId = $entity->getId();
+
+            if (!$entityId) {
+                return;
+            }
+
+            $key = $entityType . ':' . $entityId;
+
+            $candidateMap[$key] = [
+                'entityType' => $entityType,
+                'entityId' => $entityId,
+                'entityName' => $this->resolveEntityDisplayName($entityType, $entityId) ?: $entityId,
+                'entityUrl' => '#' . $entityType . '/view/' . $entityId,
+            ];
+        };
 
         foreach ($this->buildPhoneLookupVariants($normalizedPhone) as $number) {
             foreach ($this->phoneNumberEntityLookup->find($number) as $entity) {
-                $entityType = $entity->getEntityType();
-
-                if (!in_array($entityType, self::AUTO_LINK_ENTITY_TYPE_LIST, true)) {
-                    continue;
-                }
-
-                $entityId = $entity->getId();
-
-                if (!$entityId) {
-                    continue;
-                }
-
-                $key = $entityType . ':' . $entityId;
-
-                $candidateMap[$key] = [
-                    'entityType' => $entityType,
-                    'entityId' => $entityId,
-                    'entityName' => $this->resolveEntityDisplayName($entityType, $entityId) ?: $entityId,
-                    'entityUrl' => '#' . $entityType . '/view/' . $entityId,
-                ];
+                $addCandidate($entity);
             }
+        }
+
+        foreach ($this->findLinkedEntitiesByPhoneNumeric($normalizedPhone) as $entity) {
+            $addCandidate($entity);
         }
 
         $candidateList = array_values($candidateMap);
@@ -489,6 +535,33 @@ class ConversationTrackingService
         );
 
         return $candidateList;
+    }
+
+    /**
+     * Espo phone lookup matches the formatted stored phone value. WhatsApp
+     * gives us normalized digits, so fall back to phone_number.numeric to find
+     * existing CRM records without using CRM as the source of the WA phone.
+     *
+     * @return Entity[]
+     */
+    private function findLinkedEntitiesByPhoneNumeric(string $normalizedPhone): array
+    {
+        $digits = preg_replace('/[^0-9]/', '', $normalizedPhone);
+
+        if ($digits === '') {
+            return [];
+        }
+
+        $repository = $this->entityManager->getRDBRepository(PhoneNumberEntity::ENTITY_TYPE);
+        $phoneNumber = $repository
+            ->where(['numeric' => $digits])
+            ->findOne();
+
+        if (!$phoneNumber || !method_exists($repository, 'getEntityListByPhoneNumberId')) {
+            return [];
+        }
+
+        return $repository->getEntityListByPhoneNumberId($phoneNumber->getId());
     }
 
     private function buildPhoneLookupVariants(string $normalizedPhone): array
@@ -552,14 +625,30 @@ class ConversationTrackingService
             return '';
         }
 
-        return preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $participantWaId));
+        $digits = preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $participantWaId));
+
+        if ($digits === '' || strlen($digits) < 6) {
+            return '';
+        }
+
+        return $this->phoneNumberSanitizer->sanitize('+' . $digits);
     }
 
     private function normalizeProvidedPhone(?string $phone): string
     {
-        $digits = preg_replace('/[^0-9]/', '', trim((string) $phone));
+        $phone = trim((string) $phone);
 
-        return strlen($digits) >= 6 ? $digits : '';
+        if ($phone === '') {
+            return '';
+        }
+
+        if (preg_match('/^[0-9]+$/', $phone) === 1) {
+            $phone = '+' . $phone;
+        }
+
+        $normalized = $this->phoneNumberSanitizer->sanitize($phone);
+
+        return str_starts_with($normalized, '+') ? $normalized : '';
     }
 
     private function isPhoneBasedWaId(string $participantWaId): bool
@@ -614,7 +703,7 @@ class ConversationTrackingService
         return trim($firstName . ' ' . $lastName) ?: null;
     }
 
-    private function resolveEntityPhoneNumber(string $entityType, string $entityId): ?string
+    private function resolveEntityPhoneNumber(string $entityType, string $entityId, string $participantWaId = ''): ?string
     {
         if ($entityType === '' || $entityId === '') {
             return null;
@@ -626,7 +715,29 @@ class ConversationTrackingService
             return null;
         }
 
-        return $this->formatDisplayPhone((string) ($entity->get('phoneNumber') ?? ''));
+        $repository = $this->entityManager->getRepository(PhoneNumberEntity::ENTITY_TYPE);
+
+        if (method_exists($repository, 'getPhoneNumberData')) {
+            foreach ($repository->getPhoneNumberData($entity) as $item) {
+                $phoneNumber = (string) ($item->phoneNumber ?? '');
+                $digits = preg_replace('/[^0-9]/', '', $phoneNumber);
+
+                if ($digits === '' || $this->digitsMatchWaId($digits, $participantWaId)) {
+                    continue;
+                }
+
+                return $this->formatDisplayPhone($phoneNumber);
+            }
+        }
+
+        $fallbackPhone = (string) ($entity->get('phoneNumber') ?? '');
+        $fallbackDigits = preg_replace('/[^0-9]/', '', $fallbackPhone);
+
+        if ($fallbackDigits === '' || $this->digitsMatchWaId($fallbackDigits, $participantWaId)) {
+            return null;
+        }
+
+        return $this->formatDisplayPhone($fallbackPhone);
     }
 
     private function synchronizeLinkedEntityPhone(
@@ -636,6 +747,10 @@ class ConversationTrackingService
         string $participantWaId
     ): void {
         if ($newNormalizedPhone === '') {
+            return;
+        }
+
+        if (!$this->isPhoneBasedWaId($participantWaId) && $this->digitsMatchWaId($newNormalizedPhone, $participantWaId)) {
             return;
         }
 
@@ -652,7 +767,11 @@ class ConversationTrackingService
             return;
         }
 
-        $currentPhone = preg_replace('/[^0-9]/', '', (string) ($contact->get('phoneNumber') ?? ''));
+        $currentPhone = preg_replace(
+            '/[^0-9]/',
+            '',
+            (string) ($this->resolveEntityPhoneNumber('Contact', $linkedEntityId, '') ?? $contact->get('phoneNumber') ?? '')
+        );
         $lidDigits = preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $participantWaId));
 
         if (
@@ -660,9 +779,75 @@ class ConversationTrackingService
             $currentPhone === $oldNormalizedPhone ||
             ($lidDigits !== '' && $currentPhone === $lidDigits)
         ) {
-            $contact->set('phoneNumber', $newNormalizedPhone);
+            $this->applyWhatsAppPhoneNumber($contact, $newNormalizedPhone);
             $this->entityManager->saveEntity($contact);
         }
+    }
+
+    private function applyWhatsAppPhoneNumber(Entity $contact, string $normalizedPhone): void
+    {
+        $normalizedPhone = trim($normalizedPhone);
+
+        if ($normalizedPhone === '') {
+            return;
+        }
+
+        $phoneNumberData = $contact->get('phoneNumberData');
+
+        if (!is_array($phoneNumberData)) {
+            $repository = $this->entityManager->getRepository(PhoneNumberEntity::ENTITY_TYPE);
+
+            if (method_exists($repository, 'getPhoneNumberData')) {
+                $phoneNumberData = $repository->getPhoneNumberData($contact);
+            }
+        }
+
+        if (!is_array($phoneNumberData)) {
+            $phoneNumberData = [];
+        }
+
+        $targetIndex = null;
+
+        foreach ($phoneNumberData as $index => $item) {
+            if (!$item instanceof \stdClass) {
+                continue;
+            }
+
+            $itemNumber = $this->normalizeProvidedPhone((string) ($item->phoneNumber ?? ''));
+
+            if ($itemNumber === $normalizedPhone) {
+                $targetIndex = $index;
+                break;
+            }
+
+            if (!empty($item->primary)) {
+                $targetIndex = $index;
+            }
+        }
+
+        if ($targetIndex === null) {
+            $targetIndex = count($phoneNumberData);
+            $phoneNumberData[] = (object) [];
+        }
+
+        foreach ($phoneNumberData as $index => $item) {
+            if (!$item instanceof \stdClass) {
+                $item = (object) [];
+                $phoneNumberData[$index] = $item;
+            }
+
+            $item->primary = ($index === $targetIndex);
+        }
+
+        $targetItem = $phoneNumberData[$targetIndex];
+        $targetItem->phoneNumber = $normalizedPhone;
+        $targetItem->type = self::WHATSAPP_PHONE_TYPE;
+        $targetItem->optOut = (bool) ($targetItem->optOut ?? false);
+        $targetItem->invalid = (bool) ($targetItem->invalid ?? false);
+        $targetItem->primary = true;
+
+        $contact->set('phoneNumber', $normalizedPhone);
+        $contact->set('phoneNumberData', $phoneNumberData);
     }
 
     private function resolveChatDisplayName(
@@ -674,10 +859,15 @@ class ConversationTrackingService
         $contactLinkDisplayName = trim($contactLinkDisplayName);
         $linkedEntityName = trim((string) $linkedEntityName);
 
-        if ($contactLinkDisplayName !== '' && $contactLinkDisplayName !== $participantWaId) {
-            if (!preg_match('/^\d+$/', $contactLinkDisplayName) || $this->isPhoneBasedWaId($participantWaId)) {
-                return $contactLinkDisplayName;
-            }
+        if (
+            $contactLinkDisplayName !== '' &&
+            $contactLinkDisplayName !== $participantWaId &&
+            (
+                $this->isPhoneBasedWaId($participantWaId) ||
+                !$this->looksLikePhoneLabel($contactLinkDisplayName)
+            )
+        ) {
+            return $contactLinkDisplayName;
         }
 
         if ($linkedEntityName !== '') {
@@ -685,6 +875,38 @@ class ConversationTrackingService
         }
 
         return $displayPhone;
+    }
+
+    private function looksLikePhoneLabel(string $value): bool
+    {
+        $value = trim($value);
+
+        if ($value === '') {
+            return false;
+        }
+
+        $digits = preg_replace('/[^0-9]/', '', $value);
+
+        return strlen($digits) >= 7 && preg_match('/^[+0-9 ()\\-.]+$/', $value) === 1;
+    }
+
+    private function resolveFallbackDisplayName(string $participantWaId): string
+    {
+        $participantWaId = trim($participantWaId);
+
+        if ($participantWaId === '' || !$this->isPhoneBasedWaId($participantWaId)) {
+            return 'WhatsApp contact';
+        }
+
+        return $this->formatDisplayPhone($this->extractNormalizedPhone($participantWaId)) ?: 'WhatsApp contact';
+    }
+
+    private function digitsMatchWaId(string $digits, string $waId): bool
+    {
+        $digits = preg_replace('/[^0-9]/', '', $digits);
+        $waDigits = preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $waId));
+
+        return $digits !== '' && $waDigits !== '' && $digits === $waDigits;
     }
 
     private function normalizeConversation(Entity $conversation): array
@@ -705,14 +927,16 @@ class ConversationTrackingService
         $linkedEntityType = trim((string) ($contactLink?->get('linkedEntityType') ?? ''));
         $linkedEntityId = trim((string) ($contactLink?->get('linkedEntityId') ?? ''));
         $linkedEntityName = $this->resolveEntityDisplayName($linkedEntityType, $linkedEntityId);
-        $displayPhone = $this->resolveEntityPhoneNumber($linkedEntityType, $linkedEntityId)
+        $storedNormalizedPhone = trim((string) ($contactLink?->get('normalizedPhone') ?? ''));
+        $displayPhone = $this->resolveEntityPhoneNumber($linkedEntityType, $linkedEntityId, $participantWaId)
+            ?: $this->formatDisplayPhone($storedNormalizedPhone)
             ?: $this->formatDisplayPhone($this->extractNormalizedPhone($participantWaId));
         $displayName = $this->resolveChatDisplayName(
             (string) ($contactLink?->get('displayName') ?? ''),
             $linkedEntityName,
             $displayPhone,
             $participantWaId
-        ) ?: $participantWaId;
+        ) ?: $this->resolveFallbackDisplayName($participantWaId);
 
         $startedAtTimestamp = strtotime((string) ($conversation->get('startedAt') ?? '')) ?: time();
         $endedAtTimestamp = $conversation->get('endedAt')
@@ -728,6 +952,7 @@ class ConversationTrackingService
         return [
             'id' => $conversation->getId(),
             'chatId' => $conversation->get('chatId'),
+            'participantWaId' => $participantWaId,
             'status' => $conversation->get('status'),
             'startedAt' => $startedAtTimestamp,
             'endedAt' => $endedAtTimestamp,
@@ -741,9 +966,82 @@ class ConversationTrackingService
             'linkedEntityName' => $linkedEntityName ?: null,
             'linkedEntityUrl' => ($linkedEntityType && $linkedEntityId) ? '#' . $linkedEntityType . '/view/' . $linkedEntityId : null,
             'displayName' => $displayName,
+            'displayPhone' => $displayPhone,
             'title' => date('H:i | d-m-Y', $startedAtTimestamp) . ' | ' . $displayName,
             'previewMessages' => $previewMessages,
         ];
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function shouldSkipHistoryConversation(array $item): bool
+    {
+        return empty($item['firstMessageMessageId']) &&
+            (int) ($item['messageCount'] ?? 0) <= 0 &&
+            (string) ($item['status'] ?? '') !== 'open';
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function getHistoryConversationKey(array $item): string
+    {
+        $firstMessageId = trim((string) ($item['firstMessageMessageId'] ?? ''));
+
+        if ($firstMessageId !== '') {
+            return 'message:' . $firstMessageId;
+        }
+
+        return implode(':', [
+            'window',
+            (string) ($item['chatId'] ?? ''),
+            (string) ($item['startedAt'] ?? ''),
+            (string) ($item['endedAt'] ?? ''),
+            (string) ($item['timeoutAt'] ?? ''),
+        ]);
+    }
+
+    /**
+     * @param array<string, mixed> $candidate
+     * @param array<string, mixed> $current
+     */
+    private function isBetterHistoryConversation(array $candidate, array $current): bool
+    {
+        $candidateScore = $this->getHistoryConversationScore($candidate);
+        $currentScore = $this->getHistoryConversationScore($current);
+
+        if ($candidateScore !== $currentScore) {
+            return $candidateScore > $currentScore;
+        }
+
+        return (int) ($candidate['startedAt'] ?? 0) > (int) ($current['startedAt'] ?? 0);
+    }
+
+    /**
+     * @param array<string, mixed> $item
+     */
+    private function getHistoryConversationScore(array $item): int
+    {
+        $score = min(1000, (int) ($item['messageCount'] ?? 0)) * 10;
+
+        if (!empty($item['firstMessageMessageId'])) {
+            $score += 5;
+        }
+
+        if ((string) ($item['status'] ?? '') === 'open') {
+            $score += 3;
+        }
+
+        if (!empty($item['linkedEntityName'])) {
+            $score += 2;
+        }
+
+        if (!empty($item['displayName']) && (string) $item['displayName'] !== 'WhatsApp contact') {
+            $score += 1;
+        }
+
+        return $score;
     }
 
     private function loadConversationPreviewMessages(Entity $conversation): array

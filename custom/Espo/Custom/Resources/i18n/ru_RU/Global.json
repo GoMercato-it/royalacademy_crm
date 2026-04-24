@@ -1,5 +1,10 @@
 {
     "messages": {},
     "scopeNames": {},
-    "scopeNamesPlural": {}
+    "scopeNamesPlural": {},
+    "options": {
+        "phoneNumber": {
+            "WhatsApp": "WhatsApp"
+        }
+    }
 }
