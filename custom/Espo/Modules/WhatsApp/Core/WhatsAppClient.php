@@ -12,7 +12,8 @@ class WhatsAppClient
     public function __construct(
         private Config $config,
         private Log $log
-    ) {}
+    ) {
+    }
 
     public function getSessionId(): string
     {
@@ -55,51 +56,22 @@ class WhatsAppClient
         return $response['chats'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
     }
 
-    public function getChatMessages(string $chatId, int $limit = 100, bool $allowSyncFallback = true): array
+    public function getChatMessages(string $chatId, int $limit = 40, bool $allowSyncFallback = true, bool $forceSync = false): array
     {
-        $messages = $this->fetchChatMessagesBatch($chatId, $limit);
+        $limit = max(1, min(200, $limit));
 
-        if (!empty($messages)) {
-            return $messages;
-        }
-
-        $fallbackMessages = $this->fetchChatMessagesBatch($chatId);
-
-        if (!empty($fallbackMessages)) {
-            $this->log->warning('WhatsAppClient: Limited fetch returned empty, falling back to unrestricted chat batch.', [
+        if ($allowSyncFallback || $forceSync) {
+            $this->log->warning('WhatsAppClient: syncHistory fallback is disabled for UI message requests.', [
                 'chatId' => $chatId,
                 'limit' => $limit,
-                'count' => count($fallbackMessages),
+                'allowSyncFallback' => $allowSyncFallback,
+                'forceSync' => $forceSync,
             ]);
-
-            return $fallbackMessages;
         }
 
-        if ($allowSyncFallback) {
-            $this->makeRequest('POST', "/chat/syncHistory/{$this->sessionId}", [
-                'chatId' => $chatId,
-            ]);
-
-            $messages = $this->fetchChatMessagesBatch($chatId, $limit);
-
-            if (!empty($messages)) {
-                return $messages;
-            }
-
-            $fallbackMessages = $this->fetchChatMessagesBatch($chatId);
-
-            if (!empty($fallbackMessages)) {
-                $this->log->warning('WhatsAppClient: syncHistory did not restore limited fetch, using unrestricted chat batch.', [
-                    'chatId' => $chatId,
-                    'limit' => $limit,
-                    'count' => count($fallbackMessages),
-                ]);
-
-                return $fallbackMessages;
-            }
-        }
-
-        return [];
+        // Keep UI requests bounded. An unbounded fetch serializes the full in-memory
+        // WhatsApp chat and can block the Node bridge on large conversations.
+        return $this->fetchChatMessagesBatch($chatId, $limit);
     }
 
     public function getContacts(): array
@@ -107,6 +79,38 @@ class WhatsAppClient
         $response = $this->makeRequest('GET', "/client/getContacts/{$this->sessionId}");
 
         return $response['contacts'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
+    }
+
+    /**
+     * @param string[] $userIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function getContactLidAndPhone(array $userIds): array
+    {
+        $userIds = array_values(array_unique(array_filter(array_map(
+            fn ($id) => trim((string) $id),
+            $userIds
+        ))));
+
+        if ($userIds === []) {
+            return [];
+        }
+
+        $result = [];
+
+        foreach (array_chunk($userIds, 100) as $chunk) {
+            $response = $this->makeRequest('POST', "/client/getContactLidAndPhone/{$this->sessionId}", [
+                'userIds' => $chunk,
+            ]);
+
+            $data = $response['data'] ?? $response['result'] ?? [];
+
+            if (is_array($data)) {
+                $result = array_merge($result, $data);
+            }
+        }
+
+        return $result;
     }
 
     public function sendMessage(string $chatId, string $message): array
@@ -198,7 +202,7 @@ class WhatsAppClient
         $curlError = curl_error($ch);
 
         if ($curlError) {
-            $this->log->error('WhatsAppClient cURL Error: ' . $curlError);
+            $this->log->error("WhatsAppClient cURL Error ({$method} {$url}): " . $curlError);
 
             return ['success' => false, 'error' => $curlError];
         }

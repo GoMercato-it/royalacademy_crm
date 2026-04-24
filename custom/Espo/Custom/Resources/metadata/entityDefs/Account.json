@@ -1,0 +1,7 @@
+{
+    "fields": {
+        "phoneNumber": {
+            "typeList": ["Office", "Mobile", "Fax", "Other", "WhatsApp"]
+        }
+    }
+}

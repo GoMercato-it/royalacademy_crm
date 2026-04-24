@@ -3,7 +3,7 @@ define('custom:controllers/whatsapp', ['controller'], function (Controller) {
     return class extends Controller {
 
         actionIndex() {
-            this.main('custom:views/whatsapp/main', {
+            this.main('custom:views/whatsapp/main-vue-container', {
                 scope: 'WhatsApp'
             });
         }

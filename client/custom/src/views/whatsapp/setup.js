@@ -15,7 +15,7 @@ define('custom:views/whatsapp/setup', ['view', 'model'], function (View, Model) 
         <div class="panel-body">
             <div class="row">
                 <div class="col-md-12">
-                     <div class="form-group">
+                    <div class="form-group">
                         <label class="control-label" data-name="whatsappEnabled">Abilita integrazione WhatsApp</label>
                         <div class="field" data-name="whatsappEnabled">
                             {{{whatsappEnabled}}}

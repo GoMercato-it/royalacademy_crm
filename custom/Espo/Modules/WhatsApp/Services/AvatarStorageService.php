@@ -142,9 +142,20 @@ class AvatarStorageService
 
     private function normalizePhoneFromWaId(string $waId): string
     {
+        if (!$this->isPhoneBasedWaId($waId)) {
+            return '';
+        }
+
         $value = preg_replace('/@.+$/', '', $waId);
 
         return preg_replace('/[^0-9]/', '', (string) $value);
+    }
+
+    private function isPhoneBasedWaId(string $waId): bool
+    {
+        $waId = strtolower(trim($waId));
+
+        return str_ends_with($waId, '@c.us') || str_ends_with($waId, '@s.whatsapp.net');
     }
 
     private function downloadAvatarPayload(string $source): ?array

@@ -130,11 +130,12 @@ class WhatsApp
         }
 
         $limit = max(1, min(1000, (int) ($request->getQueryParam('limit') ?? 50)));
+        $liveLimit = min($limit, 100);
         $mode = strtolower((string) ($request->getQueryParam('mode') ?? 'auto'));
         $refresh = filter_var($request->getQueryParam('refresh') ?? false, FILTER_VALIDATE_BOOL);
-        $sync = filter_var($request->getQueryParam('sync') ?? false, FILTER_VALIDATE_BOOL) || $mode === 'sync';
+        $syncRequested = filter_var($request->getQueryParam('sync') ?? false, FILTER_VALIDATE_BOOL) || $mode === 'sync';
         $storedList = $this->messageDispatchService->getStoredMessages($chatId, $limit);
-        $shouldRefresh = $refresh || in_array($mode, ['live', 'refresh'], true) || ($mode === 'auto' && empty($storedList));
+        $shouldRefresh = $refresh || in_array($mode, ['live', 'refresh', 'sync'], true) || ($mode === 'auto' && empty($storedList));
 
         if ($mode === 'stored' || !$shouldRefresh) {
             return [
@@ -144,7 +145,15 @@ class WhatsApp
         }
 
         try {
-            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit, $sync && empty($storedList));
+            if ($syncRequested) {
+                $this->log->warning('WhatsApp getChatMessages sync request ignored for UI endpoint.', [
+                    'chatId' => $chatId,
+                    'mode' => $mode,
+                    'limit' => $limit,
+                ]);
+            }
+
+            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $liveLimit, false, false);
 
             if (!empty($apiMessages)) {
                 $liveList = $this->messageDispatchService->getLiveMessages($chatId, $apiMessages);

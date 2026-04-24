@@ -2,6 +2,7 @@
 
 namespace Espo\Modules\WhatsApp\Services;
 
+use Espo\Core\PhoneNumber\Sanitizer as PhoneNumberSanitizer;
 use Espo\Core\Utils\Log;
 use Espo\Modules\WhatsApp\Core\WhatsAppClient;
 
@@ -11,6 +12,7 @@ class ChatListSnapshotService
 
     public function __construct(
         private WhatsAppClient $whatsAppClient,
+        private PhoneNumberSanitizer $phoneNumberSanitizer,
         private Log $log
     ) {
     }
@@ -33,7 +35,9 @@ class ChatListSnapshotService
         }
 
         try {
-            $list = $this->normalizeChatList($this->whatsAppClient->getChats());
+            $list = $this->enrichWhatsAppPhoneNumbers(
+                $this->normalizeChatList($this->whatsAppClient->getChats())
+            );
 
             if (is_array($list)) {
                 $this->writeSnapshot($list);
@@ -167,10 +171,13 @@ class ChatListSnapshotService
 
         return [
             'id' => $id,
-            'name' => $this->readString($chat, 'name'),
-            'formattedTitle' => $this->readString($chat, 'formattedTitle'),
-            'number' => $this->readString($chat, 'number'),
-            'phoneNumber' => $this->readString($chat, 'phoneNumber'),
+            'name' => $this->sanitizeDisplayName($this->readString($chat, 'name'), $id),
+            'formattedTitle' => $this->sanitizeDisplayName($this->readString($chat, 'formattedTitle'), $id),
+            'number' => $this->sanitizePhoneValue($this->readString($chat, 'number'), $id),
+            'phoneNumber' => $this->sanitizePhoneValue($this->readString($chat, 'phoneNumber'), $id),
+            'waPhoneNumber' => $this->sanitizePhoneValue($this->readString($chat, 'phoneNumber') ?: $this->readString($chat, 'number'), $id),
+            'waPhoneId' => '',
+            'waLid' => $this->isLidChatId($id) ? $id : '',
             'isGroup' => (bool) $this->readValue($chat, 'isGroup', str_ends_with($id, '@g.us')),
             'isReadOnly' => (bool) $this->readValue($chat, 'isReadOnly', false),
             'isLocked' => (bool) $this->readValue($chat, 'isLocked', false),
@@ -180,7 +187,7 @@ class ChatListSnapshotService
             'timestamp' => $this->normalizeTimestamp($this->readValue($chat, 'timestamp')),
             'archived' => (bool) $this->readValue($chat, 'archived', false),
             'pinned' => (bool) $this->readValue($chat, 'pinned', false),
-            'contact' => $contact ? $this->normalizeContact($contact) : null,
+            'contact' => $contact ? $this->normalizeContact($contact, $id) : null,
             'lastMessage' => $lastMessage ? $this->normalizeLastMessage($lastMessage, $id) : null,
         ];
     }
@@ -189,15 +196,16 @@ class ChatListSnapshotService
      * @param array<string, mixed>|object $contact
      * @return array<string, mixed>
      */
-    private function normalizeContact(array|object $contact): array
+    private function normalizeContact(array|object $contact, string $chatId = ''): array
     {
         return [
             'id' => $this->normalizeId($this->readValue($contact, 'id')),
-            'name' => $this->readString($contact, 'name'),
-            'pushname' => $this->readString($contact, 'pushname'),
-            'shortName' => $this->readString($contact, 'shortName'),
-            'number' => $this->readString($contact, 'number'),
-            'phoneNumber' => $this->readString($contact, 'phoneNumber'),
+            'name' => $this->sanitizeDisplayName($this->readString($contact, 'name'), $chatId),
+            'pushname' => $this->sanitizeDisplayName($this->readString($contact, 'pushname'), $chatId),
+            'shortName' => $this->sanitizeDisplayName($this->readString($contact, 'shortName'), $chatId),
+            'number' => $this->sanitizePhoneValue($this->readString($contact, 'number'), $chatId),
+            'phoneNumber' => $this->sanitizePhoneValue($this->readString($contact, 'phoneNumber'), $chatId),
+            'waPhoneNumber' => $this->sanitizePhoneValue($this->readString($contact, 'phoneNumber') ?: $this->readString($contact, 'number'), $chatId),
             'isMyContact' => (bool) $this->readValue($contact, 'isMyContact', false),
         ];
     }
@@ -294,6 +302,150 @@ class ChatListSnapshotService
         }
 
         return mb_substr($preview, 0, 252) . '...';
+    }
+
+    private function sanitizeDisplayName(string $value, string $chatId): string
+    {
+        if (!$this->isLidChatId($chatId) || !$this->looksLikePhoneLabel($value)) {
+            return $value;
+        }
+
+        return $this->digitsMatchChatId($value, $chatId) ? '' : $value;
+    }
+
+    private function sanitizePhoneValue(string $value, string $chatId): string
+    {
+        if (!$this->isLidChatId($chatId)) {
+            return $value;
+        }
+
+        $value = trim($value);
+
+        if ($value === '' || preg_match('/@(lid|g\\.us)$/i', $value)) {
+            return '';
+        }
+
+        return $this->digitsMatchChatId($value, $chatId) ? '' : $value;
+    }
+
+    private function looksLikePhoneLabel(string $value): bool
+    {
+        $value = trim($value);
+
+        if ($value === '') {
+            return false;
+        }
+
+        $digits = preg_replace('/[^0-9]/', '', $value);
+
+        return strlen($digits) >= 7 && preg_match('/^[+0-9 ()\\-.]+$/', $value) === 1;
+    }
+
+    private function isLidChatId(string $chatId): bool
+    {
+        return str_ends_with(strtolower(trim($chatId)), '@lid');
+    }
+
+    private function digitsMatchChatId(string $value, string $chatId): bool
+    {
+        $valueDigits = preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $value));
+        $chatDigits = preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $chatId));
+
+        return $valueDigits !== '' && $chatDigits !== '' && $valueDigits === $chatDigits;
+    }
+
+    private function normalizePhoneNumberValue(string $value): string
+    {
+        $value = trim($value);
+
+        if ($value === '' || preg_match('/@(lid|g\\.us)$/i', $value)) {
+            return '';
+        }
+
+        $digits = preg_replace('/[^0-9]/', '', preg_replace('/@.+$/', '', $value));
+
+        if (strlen($digits) < 7) {
+            return '';
+        }
+
+        return $this->phoneNumberSanitizer->sanitize('+' . $digits);
+    }
+
+    /**
+     * WhatsApp Web can expose personal chats as @lid IDs while keeping the
+     * real phone number behind a separate lid-to-phone API. Use that API as
+     * the WA source of truth; never replace it with CRM data here.
+     *
+     * @param array<int, array<string, mixed>> $list
+     * @return array<int, array<string, mixed>>
+     */
+    private function enrichWhatsAppPhoneNumbers(array $list): array
+    {
+        $lidList = array_values(array_filter(array_map(
+            fn (array $chat) => (string) ($chat['waLid'] ?? ''),
+            $list
+        )));
+
+        if ($lidList === []) {
+            return $list;
+        }
+
+        try {
+            $linkList = $this->whatsAppClient->getContactLidAndPhone($lidList);
+        } catch (\Throwable $e) {
+            $this->log->warning('WhatsApp lid-to-phone lookup failed: ' . $e->getMessage());
+
+            return $list;
+        }
+
+        $phoneByLid = [];
+
+        foreach ($linkList as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+
+            $lid = $this->normalizeId($item['lid'] ?? '');
+            $phoneId = $this->normalizeId($item['pn'] ?? $item['phone'] ?? '');
+            $phoneNumber = $this->normalizePhoneNumberValue($phoneId);
+
+            if ($lid === '' || $phoneNumber === '') {
+                continue;
+            }
+
+            $phoneByLid[$lid] = [
+                'phoneId' => $phoneId,
+                'phoneNumber' => $phoneNumber,
+            ];
+        }
+
+        if ($phoneByLid === []) {
+            return $list;
+        }
+
+        return array_map(function (array $chat) use ($phoneByLid): array {
+            $lid = (string) ($chat['waLid'] ?? '');
+
+            if ($lid === '' || !isset($phoneByLid[$lid])) {
+                return $chat;
+            }
+
+            $phone = $phoneByLid[$lid]['phoneNumber'];
+            $phoneId = $phoneByLid[$lid]['phoneId'];
+
+            $chat['waPhoneNumber'] = $phone;
+            $chat['waPhoneId'] = $phoneId;
+            $chat['phoneNumber'] = $phone;
+            $chat['number'] = $phone;
+
+            if (isset($chat['contact']) && is_array($chat['contact'])) {
+                $chat['contact']['waPhoneNumber'] = $phone;
+                $chat['contact']['phoneNumber'] = $phone;
+                $chat['contact']['number'] = $phone;
+            }
+
+            return $chat;
+        }, $list);
     }
 
     private function shouldSkipChatId(string $chatId): bool
