@@ -5,6 +5,8 @@ namespace Espo\Modules\WhatsApp\Services;
 use Espo\Core\PhoneNumber\Sanitizer as PhoneNumberSanitizer;
 use Espo\Core\Utils\Log;
 use Espo\Modules\WhatsApp\Core\WhatsAppClient;
+use Espo\ORM\Entity;
+use Espo\ORM\EntityManager;
 
 class ChatListSnapshotService
 {
@@ -13,6 +15,7 @@ class ChatListSnapshotService
     public function __construct(
         private WhatsAppClient $whatsAppClient,
         private PhoneNumberSanitizer $phoneNumberSanitizer,
+        private EntityManager $entityManager,
         private Log $log
     ) {
     }
@@ -35,8 +38,10 @@ class ChatListSnapshotService
         }
 
         try {
-            $list = $this->enrichWhatsAppPhoneNumbers(
-                $this->normalizeChatList($this->whatsAppClient->getChats())
+            $list = $this->enrichChatListDisplayNames(
+                $this->enrichWhatsAppPhoneNumbers(
+                    $this->normalizeChatList($this->whatsAppClient->getChats())
+                )
             );
 
             if (is_array($list)) {
@@ -171,6 +176,8 @@ class ChatListSnapshotService
 
         return [
             'id' => $id,
+            'displayName' => null,
+            'linkedEntityName' => null,
             'name' => $this->sanitizeDisplayName($this->readString($chat, 'name'), $id),
             'formattedTitle' => $this->sanitizeDisplayName($this->readString($chat, 'formattedTitle'), $id),
             'number' => $this->sanitizePhoneValue($this->readString($chat, 'number'), $id),
@@ -306,7 +313,10 @@ class ChatListSnapshotService
 
     private function sanitizeDisplayName(string $value, string $chatId): string
     {
-        if (!$this->isLidChatId($chatId) || !$this->looksLikePhoneLabel($value)) {
+        if (
+            !$this->isDirectContactChatId($chatId) ||
+            !$this->looksLikePhoneLabel($value)
+        ) {
             return $value;
         }
 
@@ -344,6 +354,17 @@ class ChatListSnapshotService
     private function isLidChatId(string $chatId): bool
     {
         return str_ends_with(strtolower(trim($chatId)), '@lid');
+    }
+
+    private function isDirectContactChatId(string $chatId): bool
+    {
+        $chatId = strtolower(trim($chatId));
+
+        return $chatId !== '' && (
+            str_ends_with($chatId, '@lid') ||
+            str_ends_with($chatId, '@c.us') ||
+            str_ends_with($chatId, '@s.whatsapp.net')
+        );
     }
 
     private function digitsMatchChatId(string $value, string $chatId): bool
@@ -446,6 +467,171 @@ class ChatListSnapshotService
 
             return $chat;
         }, $list);
+    }
+
+    /**
+     * @param array<int, array<string, mixed>> $list
+     * @return array<int, array<string, mixed>>
+     */
+    private function enrichChatListDisplayNames(array $list): array
+    {
+        return array_map(fn (array $chat): array => $this->enrichChatDisplayName($chat), $list);
+    }
+
+    /**
+     * @param array<string, mixed> $chat
+     * @return array<string, mixed>
+     */
+    private function enrichChatDisplayName(array $chat): array
+    {
+        $chatId = trim((string) ($chat['id'] ?? ''));
+
+        if (!$this->isDirectContactChatId($chatId)) {
+            return $chat;
+        }
+
+        $contactLink = $this->findContactLinkForChat(
+            $chatId,
+            $this->extractNormalizedPhoneFromChat($chat)
+        );
+
+        if (!$contactLink) {
+            return $chat;
+        }
+
+        $linkedEntityType = trim((string) ($contactLink->get('linkedEntityType') ?? ''));
+        $linkedEntityId = trim((string) ($contactLink->get('linkedEntityId') ?? ''));
+        $linkedEntityName = $this->resolveEntityDisplayName($linkedEntityType, $linkedEntityId);
+        $displayName = $linkedEntityName ?: $this->resolveContactLinkDisplayName($contactLink, $chatId);
+
+        if ($displayName === null || $displayName === '') {
+            return $chat;
+        }
+
+        $chat['displayName'] = $displayName;
+        $chat['linkedEntityName'] = $linkedEntityName ?: null;
+
+        if ($this->shouldReplaceDisplayLabel((string) ($chat['name'] ?? ''), $chatId)) {
+            $chat['name'] = $displayName;
+        }
+
+        if ($this->shouldReplaceDisplayLabel((string) ($chat['formattedTitle'] ?? ''), $chatId)) {
+            $chat['formattedTitle'] = $displayName;
+        }
+
+        if (!isset($chat['contact']) || !is_array($chat['contact'])) {
+            $chat['contact'] = [];
+        }
+
+        if ($this->shouldReplaceDisplayLabel((string) ($chat['contact']['name'] ?? ''), $chatId)) {
+            $chat['contact']['name'] = $displayName;
+        }
+
+        if ($this->shouldReplaceDisplayLabel((string) ($chat['contact']['pushname'] ?? ''), $chatId)) {
+            $chat['contact']['pushname'] = $displayName;
+        }
+
+        if ($this->shouldReplaceDisplayLabel((string) ($chat['contact']['shortName'] ?? ''), $chatId)) {
+            $chat['contact']['shortName'] = $displayName;
+        }
+
+        return $chat;
+    }
+
+    /**
+     * @param array<string, mixed> $chat
+     */
+    private function extractNormalizedPhoneFromChat(array $chat): string
+    {
+        $contact = isset($chat['contact']) && is_array($chat['contact']) ? $chat['contact'] : [];
+        $candidates = [
+            (string) ($chat['waPhoneNumber'] ?? ''),
+            (string) ($chat['phoneNumber'] ?? ''),
+            (string) ($chat['number'] ?? ''),
+            (string) ($contact['waPhoneNumber'] ?? ''),
+            (string) ($contact['phoneNumber'] ?? ''),
+            (string) ($contact['number'] ?? ''),
+            (string) ($chat['id'] ?? ''),
+        ];
+
+        foreach ($candidates as $candidate) {
+            $normalized = $this->normalizePhoneNumberValue($candidate);
+
+            if ($normalized !== '') {
+                return $normalized;
+            }
+        }
+
+        return '';
+    }
+
+    private function findContactLinkForChat(string $participantWaId, string $normalizedPhone = ''): ?Entity
+    {
+        $repository = $this->entityManager->getRepository('WhatsAppContactLink');
+        $entity = $repository->where(['waId' => $participantWaId])->findOne();
+
+        if ($entity) {
+            return $entity;
+        }
+
+        if ($normalizedPhone === '') {
+            return null;
+        }
+
+        return $repository->where(['normalizedPhone' => $normalizedPhone])->findOne();
+    }
+
+    private function resolveContactLinkDisplayName(Entity $contactLink, string $chatId): ?string
+    {
+        $displayName = trim((string) ($contactLink->get('displayName') ?? ''));
+
+        if ($displayName === '' || $displayName === $chatId) {
+            return null;
+        }
+
+        if ($this->shouldSkipPhoneLikeLabel($displayName, $chatId)) {
+            return null;
+        }
+
+        return $displayName;
+    }
+
+    private function resolveEntityDisplayName(string $entityType, string $entityId): ?string
+    {
+        if ($entityType === '' || $entityId === '') {
+            return null;
+        }
+
+        $entity = $this->entityManager->getEntityById($entityType, $entityId);
+
+        if (!$entity) {
+            return null;
+        }
+
+        $name = trim((string) ($entity->get('name') ?? ''));
+
+        if ($name !== '') {
+            return $name;
+        }
+
+        $firstName = trim((string) ($entity->get('firstName') ?? ''));
+        $lastName = trim((string) ($entity->get('lastName') ?? ''));
+
+        return trim($firstName . ' ' . $lastName) ?: null;
+    }
+
+    private function shouldReplaceDisplayLabel(string $value, string $chatId): bool
+    {
+        $value = trim($value);
+
+        return $value === '' || $this->shouldSkipPhoneLikeLabel($value, $chatId) || $value === $chatId;
+    }
+
+    private function shouldSkipPhoneLikeLabel(string $value, string $chatId): bool
+    {
+        return $this->isDirectContactChatId($chatId) &&
+            $this->looksLikePhoneLabel($value) &&
+            $this->digitsMatchChatId($value, $chatId);
     }
 
     private function shouldSkipChatId(string $chatId): bool

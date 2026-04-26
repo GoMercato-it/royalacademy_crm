@@ -103,6 +103,8 @@ function getChatName(chat) {
   const contact = chat.contact && typeof chat.contact === 'object' ? chat.contact : {};
   const chatId = getChatId(chat);
   const candidates = [
+    chat.linkedEntityName,
+    chat.displayName,
     chat.name,
     chat.formattedTitle,
     chat.pushname,
@@ -118,7 +120,7 @@ function getChatName(chat) {
       continue;
     }
 
-    if (isLidChatId(chatId) && looksLikePhoneLabel(label) && digitsMatchChatId(label, chatId)) {
+    if (shouldSkipPhoneLikeLabel(label, chatId)) {
       continue;
     }
 
@@ -234,6 +236,12 @@ function isLidChatId(chatId) {
   return String(chatId || '').toLowerCase().trim().endsWith('@lid');
 }
 
+function isDirectContactChatId(chatId) {
+  const value = String(chatId || '').toLowerCase().trim();
+
+  return value.endsWith('@lid') || value.endsWith('@c.us') || value.endsWith('@s.whatsapp.net');
+}
+
 function looksLikePhoneLabel(value) {
   const label = String(value || '').trim();
 
@@ -251,6 +259,12 @@ function digitsMatchChatId(value, chatId) {
   const chatDigits = String(chatId || '').replace(/@.+$/u, '').replace(/[^0-9]/g, '');
 
   return valueDigits !== '' && chatDigits !== '' && valueDigits === chatDigits;
+}
+
+function shouldSkipPhoneLikeLabel(label, chatId) {
+  return isDirectContactChatId(chatId) &&
+    looksLikePhoneLabel(label) &&
+    digitsMatchChatId(label, chatId);
 }
 </script>
 

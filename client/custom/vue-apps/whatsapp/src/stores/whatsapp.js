@@ -3,7 +3,7 @@ import { computed, ref } from 'vue';
 import { createEspoApiClient } from '../utils/api';
 import { mergeCachedMessage, readCachedMessages, writeCachedMessages } from '../utils/messageCache';
 
-const CHAT_CACHE_KEY = 'wa-vue-chat-list-cache-v6';
+const CHAT_CACHE_KEY = 'wa-vue-chat-list-cache-v7';
 const CHAT_CACHE_TTL = 12 * 60 * 60 * 1000;
 const AVATAR_CACHE_KEY = 'wa-vue-avatar-cache-v1';
 const AVATAR_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
@@ -389,6 +389,8 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         ...contextByChat.value,
         [chatId]: context,
       };
+
+      syncChatIdentity(chatId, context);
 
       return context;
     } catch (error) {
@@ -823,6 +825,64 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     writeChatCache(chats.value);
   }
 
+  function syncChatIdentity(chatId, context) {
+    if (!chatId || !context || typeof context !== 'object') {
+      return;
+    }
+
+    const displayName = String(context.linkedEntityName || context.displayName || '').trim();
+
+    if (!displayName) {
+      return;
+    }
+
+    chats.value = chats.value.map(chat => {
+      if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
+        return chat;
+      }
+
+      const contact = chat.contact && typeof chat.contact === 'object' ? chat.contact : {};
+      const next = {
+        ...chat,
+        displayName,
+        linkedEntityName: String(context.linkedEntityName || '').trim() || null,
+      };
+
+      if (shouldReplaceDisplayLabel(next.name, chatId)) {
+        next.name = displayName;
+      }
+
+      if (shouldReplaceDisplayLabel(next.formattedTitle, chatId)) {
+        next.formattedTitle = displayName;
+      }
+
+      next.contact = {
+        ...contact,
+      };
+
+      if (shouldReplaceDisplayLabel(next.contact.name, chatId)) {
+        next.contact.name = displayName;
+      }
+
+      if (shouldReplaceDisplayLabel(next.contact.pushname, chatId)) {
+        next.contact.pushname = displayName;
+      }
+
+      if (shouldReplaceDisplayLabel(next.contact.shortName, chatId)) {
+        next.contact.shortName = displayName;
+      }
+
+      return next;
+    });
+
+    writeChatCache(chats.value);
+
+    if (activeChatId.value === chatId) {
+      const chat = findChatById(chatId);
+      activeChatName.value = chat ? getSafeChatName(chat) : displayName;
+    }
+  }
+
   function normalizeTimestamp(value) {
     if (typeof value === 'number') {
       return value > 9999999999 ? Math.floor(value / 1000) : Math.floor(value);
@@ -919,9 +979,10 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
 
     const chatId = getChatId(chat);
-    const isLid = isLidChatId(chatId);
     const contact = chat.contact && typeof chat.contact === 'object' ? chat.contact : {};
     const candidates = [
+      chat.linkedEntityName,
+      chat.displayName,
       chat.name,
       chat.formattedTitle,
       chat.pushname,
@@ -937,7 +998,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         continue;
       }
 
-      if (isLid && looksLikePhoneLabel(label) && digitsMatchChatId(label, chatId)) {
+      if (shouldSkipPhoneLikeLabel(label, chatId)) {
         continue;
       }
 
@@ -964,6 +1025,24 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     const chatDigits = String(chatId || '').replace(/@.+$/u, '').replace(/[^0-9]/g, '');
 
     return valueDigits !== '' && chatDigits !== '' && valueDigits === chatDigits;
+  }
+
+  function isDirectContactChatId(chatId) {
+    const value = String(chatId || '').toLowerCase().trim();
+
+    return value.endsWith('@lid') || value.endsWith('@c.us') || value.endsWith('@s.whatsapp.net');
+  }
+
+  function shouldSkipPhoneLikeLabel(label, chatId) {
+    return isDirectContactChatId(chatId) &&
+      looksLikePhoneLabel(label) &&
+      digitsMatchChatId(label, chatId);
+  }
+
+  function shouldReplaceDisplayLabel(value, chatId) {
+    const label = String(value || '').trim();
+
+    return !label || label === chatId || shouldSkipPhoneLikeLabel(label, chatId);
   }
 
   function chatMatchesPhone(chat, phoneDigits) {
