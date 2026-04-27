@@ -56,18 +56,9 @@ class WhatsAppClient
         return $response['chats'] ?? $response['data'] ?? (is_array($response) && !isset($response['success']) ? $response : []);
     }
 
-    public function getChatMessages(string $chatId, int $limit = 40, bool $allowSyncFallback = true, bool $forceSync = false): array
+    public function getChatMessages(string $chatId, int $limit = 40): array
     {
         $limit = max(1, min(200, $limit));
-
-        if ($allowSyncFallback || $forceSync) {
-            $this->log->warning('WhatsAppClient: syncHistory fallback is disabled for UI message requests.', [
-                'chatId' => $chatId,
-                'limit' => $limit,
-                'allowSyncFallback' => $allowSyncFallback,
-                'forceSync' => $forceSync,
-            ]);
-        }
 
         // Keep UI requests bounded. An unbounded fetch serializes the full in-memory
         // WhatsApp chat and can block the Node bridge on large conversations.

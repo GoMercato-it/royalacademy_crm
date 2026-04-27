@@ -129,48 +129,12 @@ class WhatsApp
             throw new BadRequest('chatId is required');
         }
 
-        $limit = max(1, min(1000, (int) ($request->getQueryParam('limit') ?? 50)));
-        $liveLimit = min($limit, 100);
-        $mode = strtolower((string) ($request->getQueryParam('mode') ?? 'auto'));
-        $refresh = filter_var($request->getQueryParam('refresh') ?? false, FILTER_VALIDATE_BOOL);
-        $syncRequested = filter_var($request->getQueryParam('sync') ?? false, FILTER_VALIDATE_BOOL) || $mode === 'sync';
-        $storedList = $this->messageDispatchService->getStoredMessages($chatId, $limit);
-        $shouldRefresh = $refresh || in_array($mode, ['live', 'refresh', 'sync'], true) || ($mode === 'auto' && empty($storedList));
-
-        if ($mode === 'stored' || !$shouldRefresh) {
-            return [
-                'success' => true,
-                'list' => $storedList,
-            ];
-        }
-
-        try {
-            if ($syncRequested) {
-                $this->log->warning('WhatsApp getChatMessages sync request ignored for UI endpoint.', [
-                    'chatId' => $chatId,
-                    'mode' => $mode,
-                    'limit' => $limit,
-                ]);
-            }
-
-            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $liveLimit, false, false);
-
-            if (!empty($apiMessages)) {
-                $liveList = $this->messageDispatchService->getLiveMessages($chatId, $apiMessages);
-                $this->messageDispatchService->ingestApiMessages($chatId, $apiMessages);
-
-                return [
-                    'success' => true,
-                    'list' => $liveList,
-                ];
-            }
-        } catch (\Throwable $e) {
-            $this->log->warning('WhatsApp getChatMessages API fetch failed: ' . $e->getMessage());
-        }
-
         return [
             'success' => true,
-            'list' => $storedList,
+            'list' => $this->messageDispatchService->getStoredMessages(
+                $chatId,
+                max(1, min(1000, (int) ($request->getQueryParam('limit') ?? 50)))
+            ),
         ];
     }
 
