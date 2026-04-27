@@ -11,6 +11,50 @@ export const useWebSocketStore = defineStore('websocket', () => {
   let manager = null;
   let handler = null;
 
+  function getStoredUserId() {
+    const raw = window.localStorage.getItem('espo-user-lastUserId');
+
+    if (!raw) {
+      return 'system';
+    }
+
+    try {
+      return JSON.parse(raw);
+    } catch (error) {
+      return raw;
+    }
+  }
+
+  function getStoredAuthString() {
+    let auth = window.localStorage.getItem('espo-user-auth');
+
+    if (!auth) {
+      return '';
+    }
+
+    if (auth.charAt(0) === '"') {
+      try {
+        auth = JSON.parse(auth);
+      } catch (error) {}
+    }
+
+    return auth;
+  }
+
+  function getWebSocketLocationParts() {
+    const protocolPart = window.location.protocol === 'https:' ? 'wss://' : 'ws://';
+    let url = window.location.host;
+
+    if (protocolPart === 'wss://') {
+      url += '/wss';
+    }
+
+    return {
+      protocolPart,
+      url,
+    };
+  }
+
   function connect() {
     if (subscribed.value || subscribing.value) {
       return Promise.resolve();
@@ -22,6 +66,32 @@ export const useWebSocketStore = defineStore('websocket', () => {
     return resolveManager()
       .then(resolvedManager => {
         manager = resolvedManager;
+        const locationParts = getWebSocketLocationParts();
+        const auth = getStoredAuthString();
+        const userId = getStoredUserId();
+        const shouldReconnect =
+          manager.protocolPart !== locationParts.protocolPart ||
+          manager.url !== locationParts.url;
+
+        manager.protocolPart = locationParts.protocolPart;
+        manager.url = locationParts.url;
+
+        const isEnabled = typeof manager.isEnabled === 'function' ? manager.isEnabled() : true;
+
+        if (typeof manager.setEnabled === 'function' && !isEnabled) {
+          manager.setEnabled();
+        }
+
+        if (shouldReconnect && manager.connection && !manager.isConnected) {
+          manager.connection = null;
+          manager.isConnecting = false;
+        }
+
+        if (!manager.connection && auth && userId) {
+          manager.connect(auth, userId);
+        } else if (!manager.isConnected && !manager.isConnecting && auth && userId) {
+          manager.connect(auth, userId);
+        }
 
         if (!handler) {
           handler = (topic, payload) => {

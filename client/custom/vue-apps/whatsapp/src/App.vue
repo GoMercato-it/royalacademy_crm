@@ -61,23 +61,7 @@ onMounted(() => {
   updateTheme();
 
   whatsappStore.configure(props.espoContext);
-  whatsappStore.loadStatus().catch(() => {});
-  whatsappStore.loadChats({ forceRefresh: hasInitialChatTarget() })
-    .then(chats => {
-      const initialChat = resolveInitialChatTarget(chats);
-
-      if (initialChat) {
-        return openChat(initialChat);
-      }
-
-      if (!whatsappStore.activeChatId && chats.length) {
-        return openChat(chats[0]);
-      }
-
-      return null;
-    })
-    .catch(() => {});
-  websocketStore.connect().catch(() => {});
+  bootstrap().catch(() => {});
 });
 
 onBeforeUnmount(() => {
@@ -92,6 +76,23 @@ onBeforeUnmount(() => {
   clearToastTimer();
   websocketStore.disconnect();
 });
+
+async function bootstrap() {
+  await whatsappStore.loadStatus().catch(() => null);
+  await websocketStore.connect().catch(() => null);
+
+  const chats = await whatsappStore.loadChats({ forceRefresh: true }).catch(() => []);
+  const initialChat = resolveInitialChatTarget(chats);
+
+  if (initialChat) {
+    await openChat(initialChat);
+    return;
+  }
+
+  if (!whatsappStore.activeChatId && chats.length) {
+    await openChat(chats[0]);
+  }
+}
 
 function updateViewportHeight() {
   const shell = shellRef.value;
@@ -109,12 +110,12 @@ function updateViewportHeight() {
 
 function openChat(chat) {
   targetMessageId.value = '';
-  whatsappStore.openChat(chat)
+  return whatsappStore.openChat(chat)
     .then(() => Promise.allSettled([
       whatsappStore.loadChatContext(),
       whatsappStore.loadConversationHistory(),
     ]))
-    .catch(() => {});
+    .catch(() => null);
 }
 
 function hasInitialChatTarget() {

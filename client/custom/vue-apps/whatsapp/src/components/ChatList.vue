@@ -147,11 +147,11 @@ function getChatPreview(chat) {
 
   const lastMessage = normalizeMessage(chat.lastMessage || chat.lastMessageData);
 
-  return chat.lastMessageBody ||
-    chat.bodyPreview ||
-    lastMessage.bodyPreview ||
+  return lastMessage.bodyPreview ||
     lastMessage.body ||
     lastMessage.caption ||
+    chat.lastMessageBody ||
+    chat.bodyPreview ||
     getMediaPreview(lastMessage.type, lastMessage.hasMedia) ||
     '';
 }
@@ -162,10 +162,22 @@ function getTimestamp(chat) {
   }
 
   const lastMessage = normalizeMessage(chat.lastMessage || chat.lastMessageData);
-  const raw = chat.timestamp || chat.t || chat.lastMessageTimestamp || lastMessage.timestamp || 0;
-  const numeric = Number(raw);
+  const candidates = [
+    chat.timestamp,
+    chat.t,
+    chat.lastMessageTimestamp,
+    lastMessage.timestamp,
+  ];
 
-  return Number.isFinite(numeric) ? numeric : 0;
+  return candidates.reduce((max, value) => {
+    const numeric = Number(value);
+
+    if (!Number.isFinite(numeric)) {
+      return max;
+    }
+
+    return numeric > max ? numeric : max;
+  }, 0);
 }
 
 function normalizeMessage(message) {
@@ -199,7 +211,8 @@ function getUnreadCount(chat) {
     return 0;
   }
 
-  const count = Number(chat.unreadCount || chat.unread || 0);
+  const rawCount = chat.unreadCount ?? chat.unread ?? 0;
+  const count = Number(rawCount);
 
   return Number.isFinite(count) && count > 0 ? count : 0;
 }

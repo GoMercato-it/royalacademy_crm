@@ -14,6 +14,7 @@ class MessageDispatchService
         private WhatsAppClient $whatsappClient,
         private WebSocketService $webSocketService,
         private ConversationTrackingService $conversationTrackingService,
+        private ChatListSnapshotService $chatListSnapshotService,
         private Log $log
     ) {
     }
@@ -47,6 +48,7 @@ class MessageDispatchService
         ]);
 
         $payload = $this->normalizeEntityForBroadcast($storedMessage);
+        $this->chatListSnapshotService->clearSnapshot();
         $this->broadcastMessage($payload['chatId'], $payload);
 
         return [
@@ -61,6 +63,8 @@ class MessageDispatchService
         if ($this->shouldSkipChatId($chatId)) {
             return;
         }
+
+        $updated = false;
 
         foreach (array_values($apiMessages) as $index => $apiMessage) {
             $messageId = $this->extractMessageId($apiMessage['id'] ?? $apiMessage['messageId'] ?? null);
@@ -89,11 +93,16 @@ class MessageDispatchService
                         'sortSequence' => $this->buildHistorySortSequence($apiMessage['timestamp'] ?? time(), $index),
                     ],
                 ]);
+                $updated = true;
             } catch (\PDOException $e) {
                 if (!$this->isDuplicateException($e)) {
                     $this->log->warning('WhatsApp ingestApiMessages save error: ' . $e->getMessage());
                 }
             }
+        }
+
+        if ($updated) {
+            $this->chatListSnapshotService->clearSnapshot();
         }
     }
 
@@ -199,6 +208,7 @@ class MessageDispatchService
         }
 
         $message = $this->normalizeEntityForBroadcast($storedMessage);
+        $this->chatListSnapshotService->clearSnapshot();
         $this->broadcastMessage($chatId, $message);
 
         return $message;

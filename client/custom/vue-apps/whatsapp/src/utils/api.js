@@ -127,13 +127,10 @@ export class EspoApiClient {
     return this.get('WhatsApp/action/getChats', refresh ? { refresh: true } : {});
   }
 
-  getChatMessages(chatId, { limit = 50, mode = 'stored', refresh = false } = {}) {
+  getChatMessages(chatId, { limit = 50 } = {}) {
     return this.get('WhatsApp/action/getChatMessages', {
       chatId,
       limit,
-      mode,
-      refresh,
-      sync: false,
     });
   }
 

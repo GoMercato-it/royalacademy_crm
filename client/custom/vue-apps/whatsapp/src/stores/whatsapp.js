@@ -3,12 +3,19 @@ import { computed, ref } from 'vue';
 import { createEspoApiClient } from '../utils/api';
 import { mergeCachedMessage, readCachedMessages, writeCachedMessages } from '../utils/messageCache';
 
-const CHAT_CACHE_KEY = 'wa-vue-chat-list-cache-v7';
-const CHAT_CACHE_TTL = 12 * 60 * 60 * 1000;
+const CHAT_READ_STATE_KEY = 'wa-vue-chat-read-state-v2';
 const AVATAR_CACHE_KEY = 'wa-vue-avatar-cache-v1';
 const AVATAR_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const OUTBOX_CACHE_KEY = 'wa-vue-outbox-v1';
 const OUTBOX_MAX = 100;
+
+function clearLegacyChatCaches() {
+  try {
+    window.localStorage.removeItem('wa-vue-chat-list-cache-v6');
+    window.localStorage.removeItem('wa-vue-chat-list-cache-v7');
+    window.localStorage.removeItem('wa-vue-chat-list-cache-v8');
+  } catch (error) {}
+}
 
 function getChatId(chat) {
   if (!chat) {
@@ -34,37 +41,33 @@ function getChatId(chat) {
   return chat.chatId || '';
 }
 
-function readChatCache() {
+function readChatReadState() {
   try {
-    const raw = window.localStorage.getItem(CHAT_CACHE_KEY);
+    const raw = window.localStorage.getItem(CHAT_READ_STATE_KEY);
 
     if (!raw) {
-      return [];
+      return {};
     }
 
     const parsed = JSON.parse(raw);
 
-    if (!parsed || !Array.isArray(parsed.list)) {
-      return [];
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
     }
 
-    if (!parsed.savedAt || Date.now() - parsed.savedAt > CHAT_CACHE_TTL) {
-      window.localStorage.removeItem(CHAT_CACHE_KEY);
-      return [];
-    }
-
-    return parsed.list;
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter(([, value]) => Number.isFinite(Number(value)) && Number(value) > 0)
+        .map(([chatId, value]) => [chatId, Number(value)])
+    );
   } catch (error) {
-    return [];
+    return {};
   }
 }
 
-function writeChatCache(list) {
+function writeChatReadState(map) {
   try {
-    window.localStorage.setItem(CHAT_CACHE_KEY, JSON.stringify({
-      savedAt: Date.now(),
-      list,
-    }));
+    window.localStorage.setItem(CHAT_READ_STATE_KEY, JSON.stringify(map || {}));
   } catch (error) {}
 }
 
@@ -120,11 +123,14 @@ function writeOutbox(list) {
   } catch (error) {}
 }
 
+clearLegacyChatCaches();
+
 export const useWhatsAppStore = defineStore('whatsapp', () => {
   const api = ref(null);
   const status = ref('unknown');
   const isConnected = ref(false);
-  const chats = ref(readChatCache());
+  const chats = ref([]);
+  const localReadStateByChat = ref(readChatReadState());
   const activeChatId = ref(null);
   const activeChatName = ref('');
   const messagesByChat = ref({});
@@ -139,7 +145,6 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   const loadingHistory = ref(false);
   const sendingMessage = ref(false);
   const lastError = ref(null);
-  const lastChatsLoadedAt = ref(chats.value.length ? Date.now() : 0);
   const queuedMessages = ref(readOutbox());
   const avatarRequests = new Map();
   let flushingQueue = false;
@@ -260,20 +265,14 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return chats.value;
     }
 
-    if (!forceRefresh && chats.value.length && Date.now() - lastChatsLoadedAt.value < CHAT_CACHE_TTL) {
-      return chats.value;
-    }
-
     loadingChats.value = true;
     lastError.value = null;
 
     try {
       const response = await ensureApi().getChats({ refresh: forceRefresh });
-      const list = Array.isArray(response.list) ? response.list : [];
+      const list = mergeIncomingChats(Array.isArray(response.list) ? response.list : []);
 
       chats.value = list;
-      lastChatsLoadedAt.value = Date.now();
-      writeChatCache(list);
 
       return list;
     } catch (error) {
@@ -293,6 +292,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     activeChatId.value = chatId;
     activeChatName.value = typeof chat === 'object' ? getSafeChatName(chat) : '';
+    markChatAsRead(chatId);
 
     if (!messageLimitByChat.value[chatId]) {
       messageLimitByChat.value = {
@@ -312,19 +312,16 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     return loadMessages(chatId, {
       limit: options.limit || 50,
-      mode: options.mode || 'stored',
     });
   }
 
-  async function loadMessages(chatId, { limit = 50, mode = 'stored', refresh = false } = {}) {
+  async function loadMessages(chatId, { limit = 50 } = {}) {
     loadingMessages.value = true;
     lastError.value = null;
 
     try {
       const response = await ensureApi().getChatMessages(chatId, {
         limit,
-        mode,
-        refresh,
       });
       const list = appendQueuedMessages(chatId, Array.isArray(response.list) ? response.list : []);
 
@@ -332,6 +329,9 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         ...messagesByChat.value,
         [chatId]: list,
       };
+      syncChatSummaryFromMessages(chatId, list, {
+        markRead: chatId === activeChatId.value,
+      });
       messageLimitByChat.value = {
         ...messageLimitByChat.value,
         [chatId]: limit,
@@ -356,8 +356,6 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     return loadMessages(chatId, {
       limit: Math.min(currentLimit + 50, 1000),
-      mode: 'stored',
-      refresh: false,
     });
   }
 
@@ -368,8 +366,6 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     return loadMessages(activeChatId.value, {
       limit: messageLimitByChat.value[activeChatId.value] || 50,
-      mode: 'auto',
-      refresh: true,
     });
   }
 
@@ -806,10 +802,24 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return;
     }
 
+    const messageTimestamp = toUnixTimestamp(
+      message.timestamp || Date.now(),
+      Math.floor(Date.now() / 1000)
+    );
+    const isActiveChat = activeChatId.value === chatId;
+
+    if (isActiveChat) {
+      rememberChatRead(chatId, messageTimestamp);
+    }
+
+    let updated = false;
+
     chats.value = chats.value.map(chat => {
       if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
         return chat;
       }
+
+      updated = true;
 
       return {
         ...chat,
@@ -817,12 +827,316 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
           ...(chat.lastMessage && typeof chat.lastMessage === 'object' ? chat.lastMessage : {}),
           ...message,
         },
-        timestamp: normalizeTimestamp(message.timestamp || Date.now()),
-        unreadCount: message.fromMe ? chat.unreadCount || 0 : Number(chat.unreadCount || 0) + 1,
+        lastMessageBody: String(
+          message.bodyPreview ||
+          message.body ||
+          message.caption ||
+          chat.lastMessageBody ||
+          ''
+        ).trim(),
+        bodyPreview: String(
+          message.bodyPreview ||
+          message.body ||
+          message.caption ||
+          chat.bodyPreview ||
+          ''
+        ).trim(),
+        lastMessageTimestamp: messageTimestamp,
+        timestamp: messageTimestamp,
+        t: messageTimestamp,
+        unreadCount: isActiveChat
+          ? 0
+          : (message.fromMe ? Number(chat.unreadCount || 0) : Number(chat.unreadCount || 0) + 1),
+        unread: isActiveChat
+          ? 0
+          : (message.fromMe ? Number(chat.unread || 0) : Number(chat.unread || 0) + 1),
       };
     });
 
-    writeChatCache(chats.value);
+    if (!updated) {
+      return;
+    }
+  }
+
+  function markChatAsRead(chatId) {
+    if (!chatId) {
+      return;
+    }
+
+    rememberChatRead(chatId, resolveChatActivityTimestamp(chatId));
+
+    chats.value = chats.value.map(chat => {
+      if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
+        return chat;
+      }
+
+      if (Number(chat.unreadCount || 0) === 0) {
+        return chat;
+      }
+
+      return {
+        ...chat,
+        unreadCount: 0,
+        unread: 0,
+      };
+    });
+  }
+
+  function syncChatSummaryFromMessages(chatId, list, { markRead = false } = {}) {
+    if (!chatId || !Array.isArray(list) || !list.length) {
+      if (markRead) {
+        markChatAsRead(chatId);
+      }
+
+      return;
+    }
+
+    const message = list
+      .slice()
+      .sort((a, b) => {
+        const timeDiff = normalizeTimestamp(a.timestamp || 0) - normalizeTimestamp(b.timestamp || 0);
+
+        if (timeDiff !== 0) {
+          return timeDiff;
+        }
+
+        return String(a.messageId || a.id || '').localeCompare(String(b.messageId || b.id || ''));
+      })
+      .at(-1);
+
+    if (!message) {
+      if (markRead) {
+        markChatAsRead(chatId);
+      }
+
+      return;
+    }
+
+    const summaryTimestamp = toUnixTimestamp(message.timestamp || 0, 0);
+    let updated = false;
+
+    chats.value = chats.value.map(chat => {
+      if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
+        return chat;
+      }
+
+      updated = true;
+
+      return {
+        ...chat,
+        lastMessage: {
+          ...(chat.lastMessage && typeof chat.lastMessage === 'object' ? chat.lastMessage : {}),
+          ...message,
+        },
+        lastMessageBody: String(
+          message.bodyPreview ||
+          message.body ||
+          message.caption ||
+          chat.lastMessageBody ||
+          ''
+        ).trim(),
+        bodyPreview: String(
+          message.bodyPreview ||
+          message.body ||
+          message.caption ||
+          chat.bodyPreview ||
+          ''
+        ).trim(),
+        lastMessageTimestamp: summaryTimestamp || toUnixTimestamp(chat.lastMessageTimestamp || 0, 0),
+        timestamp: summaryTimestamp || toUnixTimestamp(chat.timestamp || Date.now(), Math.floor(Date.now() / 1000)),
+        t: summaryTimestamp || toUnixTimestamp(chat.t || chat.timestamp || Date.now(), Math.floor(Date.now() / 1000)),
+        unreadCount: markRead ? 0 : Number(chat.unreadCount || 0),
+        unread: markRead ? 0 : Number(chat.unread || 0),
+      };
+    });
+
+    if (markRead) {
+      rememberChatRead(chatId, summaryTimestamp);
+    }
+
+    if (!updated) {
+      return;
+    }
+  }
+
+  function rememberChatRead(chatId, timestamp) {
+    const normalizedTimestamp = toUnixTimestamp(timestamp || 0, 0);
+
+    if (!chatId || !normalizedTimestamp) {
+      return false;
+    }
+
+    const currentTimestamp = Number(localReadStateByChat.value[chatId] || 0);
+
+    if (currentTimestamp >= normalizedTimestamp) {
+      return false;
+    }
+
+    localReadStateByChat.value = {
+      ...localReadStateByChat.value,
+      [chatId]: normalizedTimestamp,
+    };
+    writeChatReadState(localReadStateByChat.value);
+
+    return true;
+  }
+
+  function resolveChatActivityTimestamp(chatId) {
+    const activeList = messagesByChat.value[chatId] || [];
+    const lastKnownMessage = activeList.length ? activeList[activeList.length - 1] : null;
+    const currentChat = findChatById(chatId);
+
+    return toUnixTimestamp(
+      (lastKnownMessage && lastKnownMessage.timestamp) ||
+      (currentChat && currentChat.timestamp) ||
+      (currentChat && currentChat.lastMessage && currentChat.lastMessage.timestamp) ||
+      Date.now(),
+      Math.floor(Date.now() / 1000)
+    );
+  }
+
+  function mergeIncomingChats(list) {
+    const currentChatById = new Map(
+      chats.value.map(chat => [getChatId(chat), chat])
+    );
+
+    return list.map(chat => mergeIncomingChat(chat, currentChatById.get(getChatId(chat))));
+  }
+
+  function mergeIncomingChat(chat, currentChat) {
+    if (!chat || typeof chat !== 'object') {
+      return chat;
+    }
+
+    const chatId = getChatId(chat);
+    let next = {
+      ...chat,
+    };
+
+    if (currentChat && typeof currentChat === 'object') {
+      const currentTimestamp = resolveComparableChatTimestamp(currentChat);
+      const incomingTimestamp = resolveComparableChatTimestamp(chat);
+      const currentContact = currentChat.contact && typeof currentChat.contact === 'object' ? currentChat.contact : {};
+      const nextContact = next.contact && typeof next.contact === 'object' ? { ...next.contact } : {};
+
+      if (currentChat.displayName && !next.displayName) {
+        next.displayName = currentChat.displayName;
+      }
+
+      if (currentChat.linkedEntityName && !next.linkedEntityName) {
+        next.linkedEntityName = currentChat.linkedEntityName;
+      }
+
+      if (shouldReplaceDisplayLabel(next.name, chatId) && !shouldReplaceDisplayLabel(currentChat.name, chatId)) {
+        next.name = currentChat.name;
+      }
+
+      if (
+        shouldReplaceDisplayLabel(next.formattedTitle, chatId) &&
+        !shouldReplaceDisplayLabel(currentChat.formattedTitle, chatId)
+      ) {
+        next.formattedTitle = currentChat.formattedTitle;
+      }
+
+      if (shouldReplaceDisplayLabel(nextContact.name, chatId) && !shouldReplaceDisplayLabel(currentContact.name, chatId)) {
+        nextContact.name = currentContact.name;
+      }
+
+      if (
+        shouldReplaceDisplayLabel(nextContact.pushname, chatId) &&
+        !shouldReplaceDisplayLabel(currentContact.pushname, chatId)
+      ) {
+        nextContact.pushname = currentContact.pushname;
+      }
+
+      if (
+        shouldReplaceDisplayLabel(nextContact.shortName, chatId) &&
+        !shouldReplaceDisplayLabel(currentContact.shortName, chatId)
+      ) {
+        nextContact.shortName = currentContact.shortName;
+      }
+
+      if (Object.keys(nextContact).length) {
+        next.contact = nextContact;
+      }
+
+      if (currentTimestamp > incomingTimestamp) {
+        next = {
+          ...next,
+          lastMessage: currentChat.lastMessage || next.lastMessage,
+          lastMessageBody: currentChat.lastMessageBody || next.lastMessageBody,
+          bodyPreview: currentChat.bodyPreview || next.bodyPreview,
+          lastMessageTimestamp: currentChat.lastMessageTimestamp || next.lastMessageTimestamp,
+          timestamp: currentChat.timestamp || next.timestamp,
+          t: currentChat.t || currentChat.timestamp || next.t,
+          unreadCount: currentChat.unreadCount ?? next.unreadCount,
+          unread: currentChat.unread ?? next.unread,
+        };
+      }
+    }
+
+    return applyLocalReadState(next);
+  }
+
+  function applyLocalReadState(chat) {
+    if (!chat || typeof chat !== 'object') {
+      return chat;
+    }
+
+    const chatId = getChatId(chat);
+    const readAt = Number(localReadStateByChat.value[chatId] || 0);
+
+    if (!readAt) {
+      return chat;
+    }
+
+    const chatTimestamp = resolveComparableChatTimestamp(chat);
+
+    if (!chatTimestamp || chatTimestamp > readAt || Number(chat.unreadCount || 0) <= 0) {
+      return chat;
+    }
+
+    return {
+      ...chat,
+      unreadCount: 0,
+      unread: 0,
+    };
+  }
+
+  function resolveComparableChatTimestamp(chat) {
+    if (!chat || typeof chat !== 'object') {
+      return 0;
+    }
+
+    return toUnixTimestamp(
+      chat.timestamp ||
+      chat.t ||
+      chat.lastMessageTimestamp ||
+      (chat.lastMessage && chat.lastMessage.timestamp) ||
+      (chat.lastMessageData && chat.lastMessageData.timestamp) ||
+      0,
+      0
+    );
+  }
+
+  function toUnixTimestamp(value, fallback = 0) {
+    if (typeof value === 'number') {
+      return value > 9999999999 ? Math.floor(value / 1000) : Math.floor(value);
+    }
+
+    const numeric = Number(value);
+
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric > 9999999999 ? Math.floor(numeric / 1000) : Math.floor(numeric);
+    }
+
+    const parsed = Date.parse(String(value || ''));
+
+    if (Number.isFinite(parsed) && parsed > 0) {
+      return Math.floor(parsed / 1000);
+    }
+
+    return fallback;
   }
 
   function syncChatIdentity(chatId, context) {
@@ -874,9 +1188,6 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
       return next;
     });
-
-    writeChatCache(chats.value);
-
     if (activeChatId.value === chatId) {
       const chat = findChatById(chatId);
       activeChatName.value = chat ? getSafeChatName(chat) : displayName;
