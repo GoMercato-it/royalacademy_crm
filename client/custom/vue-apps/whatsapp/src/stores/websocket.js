@@ -95,7 +95,12 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
         if (!handler) {
           handler = (topic, payload) => {
-            const eventPayload = typeof topic === 'object' && payload === undefined ? topic : payload;
+            const eventPayload = normalizeEventPayload(topic, payload);
+
+            if (!eventPayload) {
+              return;
+            }
+
             useWhatsAppStore().handleRealtimeEvent(eventPayload);
           };
         }
@@ -174,6 +179,20 @@ export const useWebSocketStore = defineStore('websocket', () => {
 
     window.clearTimeout(retryTimer.value);
     retryTimer.value = null;
+  }
+
+  function normalizeEventPayload(topic, payload) {
+    let eventPayload = payload === undefined ? topic : payload;
+
+    if (typeof eventPayload === 'string') {
+      try {
+        eventPayload = JSON.parse(eventPayload);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    return eventPayload && typeof eventPayload === 'object' ? eventPayload : null;
   }
 
   return {

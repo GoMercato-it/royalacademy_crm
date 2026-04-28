@@ -770,21 +770,26 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   }
 
   function handleRealtimeEvent(payload) {
+    payload = normalizeRealtimePayload(payload);
+
     if (!payload) {
       return;
     }
 
     const action = payload.action || payload.type;
     const data = payload.data || payload;
-    const chatId = payload.chatId || data.chatId || getChatId(data.chat);
+    const rawMessage = data.message || data;
+    const rawChatId = payload.chatId || data.chatId || getChatId(data.chat) || (rawMessage && rawMessage.chatId) || '';
+    const chatId = resolveRealtimeChatId(rawChatId, rawMessage);
+    const message = withRealtimeChatId(chatId, rawMessage);
 
-    if (action === 'message' && chatId) {
-      mergeMessage(chatId, data.message || data);
-      touchChatPreview(chatId, data.message || data);
+    if (isMessageRealtimeAction(action) && chatId) {
+      mergeMessage(chatId, message);
+      touchChatPreview(chatId, message);
     }
 
-    if (action === 'message_ack' && chatId) {
-      mergeMessage(chatId, data.message || data);
+    if (isMessageAckRealtimeAction(action) && chatId) {
+      mergeMessage(chatId, message);
     }
 
     if (action === 'lifecycle') {
@@ -797,6 +802,133 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
   }
 
+  function normalizeRealtimePayload(payload) {
+    if (typeof payload === 'string') {
+      try {
+        payload = JSON.parse(payload);
+      } catch (error) {
+        return null;
+      }
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      return null;
+    }
+
+    if (typeof payload.data === 'string') {
+      try {
+        payload = {
+          ...payload,
+          data: JSON.parse(payload.data),
+        };
+      } catch (error) {}
+    }
+
+    return payload;
+  }
+
+  function isMessageRealtimeAction(action) {
+    return ['message', 'message.new', 'message_new', 'new_message'].includes(String(action || ''));
+  }
+
+  function isMessageAckRealtimeAction(action) {
+    return ['message_ack', 'message.ack', 'message_acknowledgement'].includes(String(action || ''));
+  }
+
+  function withRealtimeChatId(chatId, message) {
+    if (!message || typeof message !== 'object') {
+      return {
+        id: `ws-${Date.now()}`,
+        chatId,
+        body: String(message || ''),
+        bodyPreview: String(message || ''),
+        timestamp: Math.floor(Date.now() / 1000),
+      };
+    }
+
+    return {
+      ...message,
+      chatId: chatId || message.chatId || '',
+    };
+  }
+
+  function resolveRealtimeChatId(chatId, message) {
+    const match = findChatByRealtimeIdentity(chatId, message);
+
+    if (match) {
+      return getChatId(match);
+    }
+
+    return String(chatId || (message && message.chatId) || '').trim();
+  }
+
+  function findChatByRealtimeIdentity(chatId, message) {
+    const candidates = getRealtimeChatIdCandidates(chatId, message);
+
+    for (const candidate of candidates) {
+      const exact = findChatById(candidate);
+
+      if (exact) {
+        return exact;
+      }
+    }
+
+    const phoneDigits = resolveRealtimePhoneDigits(chatId, message);
+
+    if (!phoneDigits) {
+      return null;
+    }
+
+    return chats.value.find(chat => chatMatchesPhone(chat, phoneDigits)) || null;
+  }
+
+  function getRealtimeChatIdCandidates(chatId, message) {
+    const payloadMeta = message && message.payloadMeta && typeof message.payloadMeta === 'object' ? message.payloadMeta : {};
+    const candidates = [
+      chatId,
+      message && message.chatId,
+      message && getChatId(message.chat),
+      message && message.participantWaId,
+      message && message.waPhoneNumber,
+      message && message.phoneNumber,
+      message && message.number,
+    ];
+    const primary = candidates.find(candidate => String(candidate || '').trim());
+
+    if (!isGroupChatId(primary || '')) {
+      candidates.push(
+        message && (message.fromMe ? message.to : message.from),
+        message && message.from,
+        message && message.to,
+        message && message.author,
+        payloadMeta.from,
+        payloadMeta.to,
+        payloadMeta.author
+      );
+    }
+
+    return candidates
+      .map(candidate => getChatId(candidate))
+      .map(candidate => String(candidate || '').trim())
+      .filter(Boolean);
+  }
+
+  function resolveRealtimePhoneDigits(chatId, message) {
+    for (const candidate of getRealtimeChatIdCandidates(chatId, message)) {
+      if (isGroupChatId(candidate)) {
+        continue;
+      }
+
+      const digits = normalizePhoneValue(candidate);
+
+      if (digits) {
+        return digits;
+      }
+    }
+
+    return '';
+  }
+
   function touchChatPreview(chatId, message) {
     if (!chatId || !message) {
       return;
@@ -806,7 +938,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       message.timestamp || Date.now(),
       Math.floor(Date.now() / 1000)
     );
-    const isActiveChat = activeChatId.value === chatId;
+    const isActiveChat = isActiveRealtimeChat(chatId, message);
 
     if (isActiveChat) {
       rememberChatRead(chatId, messageTimestamp);
@@ -815,11 +947,15 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     let updated = false;
 
     chats.value = chats.value.map(chat => {
-      if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
+      if (!matchesRealtimeChatIdentity(chat, chatId, message)) {
         return chat;
       }
 
       updated = true;
+
+      if (shouldIgnoreStalePreview(chat, message, messageTimestamp)) {
+        return chat;
+      }
 
       return {
         ...chat,
@@ -854,8 +990,129 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     });
 
     if (!updated) {
-      return;
+      const chat = createChatFromRealtimeMessage(chatId, message, messageTimestamp, isActiveChat);
+
+      if (chat) {
+        chats.value = [
+          chat,
+          ...chats.value,
+        ];
+      }
     }
+  }
+
+  function isActiveRealtimeChat(chatId, message) {
+    if (!activeChatId.value) {
+      return false;
+    }
+
+    if (activeChatId.value === chatId) {
+      return true;
+    }
+
+    const active = findChatById(activeChatId.value);
+
+    return !!(active && matchesRealtimeChatIdentity(active, chatId, message));
+  }
+
+  function matchesRealtimeChatIdentity(chat, chatId, message) {
+    if (!chat || typeof chat !== 'object') {
+      return false;
+    }
+
+    const currentChatId = getChatId(chat);
+
+    if (currentChatId && currentChatId === chatId) {
+      return true;
+    }
+
+    const phoneDigits = resolveRealtimePhoneDigits(chatId, message);
+
+    return !!(phoneDigits && chatMatchesPhone(chat, phoneDigits));
+  }
+
+  function shouldIgnoreStalePreview(chat, message, messageTimestamp) {
+    const currentTimestamp = resolveComparableChatTimestamp(chat);
+
+    if (!currentTimestamp || !messageTimestamp || messageTimestamp >= currentTimestamp) {
+      return false;
+    }
+
+    const currentId = getMessageIdentity(chat.lastMessage || chat.lastMessageData);
+    const incomingId = getMessageIdentity(message);
+
+    return !incomingId || incomingId !== currentId;
+  }
+
+  function getMessageIdentity(message) {
+    if (!message || typeof message !== 'object') {
+      return '';
+    }
+
+    return String(message.messageId || message.id || '');
+  }
+
+  function createChatFromRealtimeMessage(chatId, message, messageTimestamp, isActiveChat) {
+    const id = String(chatId || (message && message.chatId) || '').trim();
+
+    if (!id) {
+      return null;
+    }
+
+    const phoneDigits = resolveRealtimePhoneDigits(id, message);
+    const phone = extractChatPhoneValue({
+      id,
+      phoneNumber: message.phoneNumber,
+      waPhoneNumber: message.waPhoneNumber,
+      number: message.number,
+    }, id) || (phoneDigits ? `+${phoneDigits}` : '');
+    const displayName = String(
+      message.chatName ||
+      message.displayName ||
+      message.senderName ||
+      message.notifyName ||
+      message.pushname ||
+      ''
+    ).trim();
+    const preview = getRealtimeMessagePreview(message);
+    const unreadCount = isActiveChat || message.fromMe ? 0 : 1;
+
+    return {
+      id,
+      displayName: displayName || null,
+      name: displayName || phone || (isLidChatId(id) ? 'WhatsApp contact' : id),
+      phoneNumber: phone,
+      waPhoneNumber: phone,
+      unreadCount,
+      unread: unreadCount,
+      timestamp: messageTimestamp,
+      t: messageTimestamp,
+      lastMessageTimestamp: messageTimestamp,
+      lastMessageBody: preview,
+      bodyPreview: preview,
+      contact: phone ? {
+        phoneNumber: phone,
+        waPhoneNumber: phone,
+        number: phone,
+      } : null,
+      lastMessage: {
+        ...message,
+        chatId: id,
+        timestamp: messageTimestamp,
+        bodyPreview: preview,
+      },
+    };
+  }
+
+  function getRealtimeMessagePreview(message) {
+    return String(
+      message.bodyPreview ||
+      message.body ||
+      message.caption ||
+      (message.type && message.type !== 'chat' ? `[${message.type}]` : '') ||
+      (message.hasMedia ? '[Media]' : '') ||
+      ''
+    ).trim();
   }
 
   function markChatAsRead(chatId) {
