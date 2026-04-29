@@ -8,6 +8,7 @@ const AVATAR_CACHE_KEY = 'wa-vue-avatar-cache-v1';
 const AVATAR_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const OUTBOX_CACHE_KEY = 'wa-vue-outbox-v1';
 const OUTBOX_MAX = 100;
+const LOCAL_REACTION_SENDER = '__crm_user__';
 
 function clearLegacyChatCaches() {
   try {
@@ -129,7 +130,9 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   const api = ref(null);
   const status = ref('unknown');
   const isConnected = ref(false);
+  const qrCode = ref('');
   const chats = ref([]);
+  const groups = ref([]);
   const localReadStateByChat = ref(readChatReadState());
   const activeChatId = ref(null);
   const activeChatName = ref('');
@@ -137,9 +140,12 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   const messageLimitByChat = ref({});
   const contextByChat = ref({});
   const historyByChat = ref({});
+  const conversationPreviewById = ref({});
   const avatarUrlByChat = ref(readAvatarCache());
   const loadingStatus = ref(false);
+  const loadingQr = ref(false);
   const loadingChats = ref(false);
+  const loadingGroups = ref(false);
   const loadingMessages = ref(false);
   const loadingContext = ref(false);
   const loadingHistory = ref(false);
@@ -147,6 +153,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   const lastError = ref(null);
   const queuedMessages = ref(readOutbox());
   const avatarRequests = new Map();
+  const conversationPreviewRequests = new Map();
   let flushingQueue = false;
 
   const activeMessages = computed(() => {
@@ -157,12 +164,14 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     return messagesByChat.value[activeChatId.value] || [];
   });
 
+  const chatList = computed(() => mergeChatAndGroupLists(chats.value, groups.value));
+
   const activeChat = computed(() => {
     if (!activeChatId.value) {
       return null;
     }
 
-    return chats.value.find(chat => getChatId(chat) === activeChatId.value) || null;
+    return chatList.value.find(chat => getChatId(chat) === activeChatId.value) || null;
   });
 
   const activeChatContext = computed(() => {
@@ -194,7 +203,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return null;
     }
 
-    return chats.value.find(chat => getChatId(chat) === id) || null;
+    return chatList.value.find(chat => getChatId(chat) === id) || null;
   }
 
   function findChatByPhone(phoneNumber) {
@@ -204,7 +213,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return null;
     }
 
-    return chats.value.find(chat => chatMatchesPhone(chat, digits)) || null;
+    return chatList.value.find(chat => chatMatchesPhone(chat, digits)) || null;
   }
 
   function createChatFromPhone(phoneNumber) {
@@ -260,6 +269,62 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
   }
 
+  async function startLogin() {
+    loadingQr.value = true;
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().login();
+
+      qrCode.value = response.qrCode || '';
+
+      if (qrCode.value) {
+        status.value = 'qr_ready';
+        isConnected.value = false;
+      }
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    } finally {
+      loadingQr.value = false;
+    }
+  }
+
+  async function logout() {
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().logout();
+
+      clearSessionState();
+      await startLogin().catch(error => {
+        lastError.value = error;
+      });
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    }
+  }
+
+  function clearSessionState() {
+    status.value = 'disconnected';
+    isConnected.value = false;
+    chats.value = [];
+    groups.value = [];
+    activeChatId.value = null;
+    activeChatName.value = '';
+    messagesByChat.value = {};
+    messageLimitByChat.value = {};
+    contextByChat.value = {};
+    historyByChat.value = {};
+    conversationPreviewById.value = {};
+    avatarUrlByChat.value = {};
+  }
+
   async function loadChats({ forceRefresh = false } = {}) {
     if (loadingChats.value) {
       return chats.value;
@@ -280,6 +345,29 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       throw error;
     } finally {
       loadingChats.value = false;
+    }
+  }
+
+  async function loadGroups({ forceRefresh = false } = {}) {
+    if (loadingGroups.value) {
+      return groups.value;
+    }
+
+    loadingGroups.value = true;
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().getGroups({ forceRefresh });
+      const list = sanitizeGroupList(Array.isArray(response.list) ? response.list : []);
+
+      groups.value = list;
+
+      return list;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    } finally {
+      loadingGroups.value = false;
     }
   }
 
@@ -426,6 +514,43 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     } finally {
       loadingHistory.value = false;
     }
+  }
+
+  async function loadConversationPreview(conversationId, { limit = 5 } = {}) {
+    const id = String(conversationId || '').trim();
+
+    if (!id) {
+      return [];
+    }
+
+    if (Object.prototype.hasOwnProperty.call(conversationPreviewById.value, id)) {
+      return conversationPreviewById.value[id];
+    }
+
+    if (conversationPreviewRequests.has(id)) {
+      return conversationPreviewRequests.get(id);
+    }
+
+    const request = ensureApi().getConversationPreview(id, { limit })
+      .then(response => {
+        const list = Array.isArray(response.messages) ? sanitizeConversationPreview(response.messages) : [];
+
+        conversationPreviewById.value = {
+          ...conversationPreviewById.value,
+          [id]: list,
+        };
+        conversationPreviewRequests.delete(id);
+
+        return list;
+      })
+      .catch(error => {
+        conversationPreviewRequests.delete(id);
+        throw error;
+      });
+
+    conversationPreviewRequests.set(id, request);
+
+    return request;
   }
 
   async function createContactFromActiveChat() {
@@ -671,6 +796,518 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     return sent;
   }
 
+  async function sendMedia(payload = {}) {
+    const chatId = payload.chatId || activeChatId.value;
+    const type = String(payload.type || '').trim();
+
+    if (!chatId || !type) {
+      return null;
+    }
+
+    sendingMessage.value = true;
+    lastError.value = null;
+
+    try {
+      const response = await callMediaApi(chatId, type, payload);
+
+      await refreshActiveMessages().catch(() => []);
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    } finally {
+      sendingMessage.value = false;
+    }
+  }
+
+  async function sendLocation(payload = {}) {
+    const chatId = payload.chatId || activeChatId.value;
+    const latitude = Number(payload.latitude);
+    const longitude = Number(payload.longitude);
+
+    if (!chatId || !Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return null;
+    }
+
+    sendingMessage.value = true;
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().sendLocation(chatId, latitude, longitude, payload.description || '');
+
+      await refreshActiveMessages().catch(() => []);
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    } finally {
+      sendingMessage.value = false;
+    }
+  }
+
+  async function sendContactCard(contactId, options = {}) {
+    const chatId = options.chatId || activeChatId.value;
+    const id = String(contactId || '').trim();
+
+    if (!chatId || !id) {
+      return null;
+    }
+
+    sendingMessage.value = true;
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().sendContactCard(chatId, id);
+
+      await refreshActiveMessages().catch(() => []);
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    } finally {
+      sendingMessage.value = false;
+    }
+  }
+
+  async function callMediaApi(chatId, type, payload) {
+    const apiClient = ensureApi();
+
+    if (type === 'image') {
+      return apiClient.sendImage(chatId, payload.url, payload.caption || '');
+    }
+
+    if (type === 'video') {
+      return apiClient.sendVideo(chatId, payload.url, payload.caption || '');
+    }
+
+    if (type === 'audio') {
+      return apiClient.sendAudio(chatId, payload.url, { asVoice: !!payload.asVoice });
+    }
+
+    if (type === 'voice') {
+      return apiClient.sendVoiceNote(chatId, payload.url);
+    }
+
+    if (type === 'document') {
+      return apiClient.sendDocument(chatId, payload.url, payload.filename, payload.caption || '');
+    }
+
+    if (type === 'sticker') {
+      return apiClient.sendSticker(chatId, payload.url);
+    }
+
+    throw new Error('Unsupported media type.');
+  }
+
+  async function createPoll(question, pollOptions, config = {}) {
+    const chatId = activeChatId.value;
+    const options = Array.isArray(pollOptions) ? pollOptions.filter(Boolean) : [];
+
+    if (!chatId || !String(question || '').trim() || options.length < 2) {
+      return null;
+    }
+
+    sendingMessage.value = true;
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().createPoll(chatId, String(question).trim(), options, config);
+
+      await refreshActiveMessages().catch(() => []);
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    } finally {
+      sendingMessage.value = false;
+    }
+  }
+
+  async function editMessage(message, content) {
+    const target = resolveMessageTarget(message);
+
+    if (!target || !String(content || '').trim()) {
+      return null;
+    }
+
+    const response = await runMessageOperation(() => ensureApi().editMessage(target.chatId, target.messageId, content));
+
+    mergeMessage(target.chatId, {
+      ...message,
+      body: content,
+      bodyPreview: content,
+      edited: true,
+    });
+
+    return response;
+  }
+
+  async function deleteMessage(message, options = {}) {
+    const target = resolveMessageTarget(message);
+
+    if (!target) {
+      return null;
+    }
+
+    const response = await runMessageOperation(() => ensureApi().deleteMessage(target.chatId, target.messageId, options));
+    const current = messagesByChat.value[target.chatId] || [];
+
+    messagesByChat.value = {
+      ...messagesByChat.value,
+      [target.chatId]: current.filter(item => String(item.messageId || item.id || '') !== target.messageId),
+    };
+
+    return response;
+  }
+
+  async function reactToMessage(message, reaction) {
+    const target = resolveMessageTarget(message);
+
+    if (!target) {
+      return null;
+    }
+
+    lastError.value = null;
+
+    try {
+      const response = await ensureApi().reactToMessage(target.chatId, target.messageId, reaction || '');
+
+      mergeMessage(target.chatId, withLocalReaction(message, reaction));
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    }
+  }
+
+  async function forwardMessage(message, destinationChatId) {
+    const target = resolveMessageTarget(message);
+    const destination = String(destinationChatId || '').trim();
+
+    if (!target || !destination) {
+      return null;
+    }
+
+    return runMessageOperation(() => ensureApi().forwardMessage(target.chatId, target.messageId, destination));
+  }
+
+  async function setMessageStarred(message, starred) {
+    const target = resolveMessageTarget(message);
+
+    if (!target) {
+      return null;
+    }
+
+    const response = await runMessageOperation(() => starred ?
+      ensureApi().starMessage(target.chatId, target.messageId) :
+      ensureApi().unstarMessage(target.chatId, target.messageId)
+    );
+
+    mergeMessage(target.chatId, {
+      ...message,
+      isStarred: starred,
+      starred,
+    });
+
+    return response;
+  }
+
+  async function getMessageReactions(message) {
+    const target = resolveMessageTarget(message);
+
+    if (!target) {
+      return null;
+    }
+
+    return runMessageOperation(() => ensureApi().getMessageReactions(target.chatId, target.messageId));
+  }
+
+  async function downloadMedia(message) {
+    const target = resolveMessageTarget(message);
+
+    if (!target) {
+      return null;
+    }
+
+    return runMessageOperation(() => ensureApi().downloadMedia(target.chatId, target.messageId));
+  }
+
+  async function getPollVotes(message) {
+    const target = resolveMessageTarget(message);
+
+    if (!target) {
+      return null;
+    }
+
+    return runMessageOperation(() => ensureApi().getPollVotes(target.chatId, target.messageId));
+  }
+
+  async function voteInPoll(message, selectedOptions) {
+    const target = resolveMessageTarget(message);
+    const options = Array.isArray(selectedOptions) ? selectedOptions.filter(Boolean) : [];
+
+    if (!target || !options.length) {
+      return null;
+    }
+
+    return runMessageOperation(() => ensureApi().voteInPoll(target.chatId, target.messageId, options));
+  }
+
+  async function runMessageOperation(callback) {
+    lastError.value = null;
+
+    try {
+      const response = await callback();
+
+      await refreshActiveMessages().catch(() => []);
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    }
+  }
+
+  function resolveMessageTarget(message) {
+    const chatId = String((message && message.chatId) || activeChatId.value || '').trim();
+    const messageId = String((message && (message.messageId || message.id)) || '').trim();
+
+    if (!chatId || !messageId) {
+      return null;
+    }
+
+    return {
+      chatId,
+      messageId,
+    };
+  }
+
+  function withLocalReaction(message, reaction) {
+    const payloadMeta = message && message.payloadMeta && typeof message.payloadMeta === 'object' ?
+      { ...message.payloadMeta } :
+      {};
+    const reactions = normalizeReactionList(payloadMeta.reactions)
+      .filter(item => !isCurrentUserReaction(item));
+    const reactionValue = String(reaction || '').trim();
+
+    if (reactionValue) {
+      reactions.push({
+        senderId: LOCAL_REACTION_SENDER,
+        reaction: reactionValue,
+        timestamp: Math.floor(Date.now() / 1000),
+        fromMe: true,
+        optimistic: true,
+      });
+    }
+
+    return {
+      ...message,
+      payloadMeta: {
+        ...payloadMeta,
+        reactions,
+      },
+    };
+  }
+
+  function normalizeReactionList(reactions) {
+    const list = Array.isArray(reactions) ?
+      reactions :
+      (reactions && typeof reactions === 'object' ? Object.values(reactions) : []);
+
+    return list
+      .filter(item => item && typeof item === 'object' && String(item.reaction || '').trim())
+      .map(item => ({
+        ...item,
+        senderId: String(item.senderId || item.id || ''),
+        reaction: String(item.reaction || '').trim(),
+      }));
+  }
+
+  function isCurrentUserReaction(reaction) {
+    if (!reaction || typeof reaction !== 'object') {
+      return false;
+    }
+
+    return reaction.senderId === LOCAL_REACTION_SENDER ||
+      isTruthyFlag(reaction.optimistic) ||
+      isTruthyFlag(reaction.fromMe);
+  }
+
+  function isTruthyFlag(value) {
+    return value === true || value === 1 || value === '1' || value === 'true';
+  }
+
+  async function setAccountStatus(value) {
+    const text = String(value || '').trim();
+
+    if (!text) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().setStatus(text));
+  }
+
+  async function updateProfilePicture(pictureMimetype, pictureData) {
+    const mimetype = String(pictureMimetype || '').trim();
+    const data = String(pictureData || '').trim();
+
+    if (!mimetype || !data) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().updateProfilePicture(mimetype, data));
+  }
+
+  async function getContactStatus(contactId = activeChatId.value) {
+    const id = String(contactId || '').trim();
+
+    if (!id) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().getContactStatus(id));
+  }
+
+  async function getContactProfilePicture(contactId = activeChatId.value) {
+    const id = String(contactId || '').trim();
+
+    if (!id) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().getContactProfilePicture(id));
+  }
+
+  async function blockUser(contactId = activeChatId.value) {
+    const id = String(contactId || '').trim();
+
+    if (!id) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().blockUser(id));
+  }
+
+  async function unblockUser(contactId = activeChatId.value) {
+    const id = String(contactId || '').trim();
+
+    if (!id) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().unblockUser(id));
+  }
+
+  async function checkNumberOnWhatsApp(number = activeChatPhone.value) {
+    const value = String(number || '').trim();
+
+    if (!value) {
+      return null;
+    }
+
+    return runAccountOperation(() => ensureApi().checkNumberOnWhatsApp(value));
+  }
+
+  async function getBlockedContacts() {
+    return runAccountOperation(() => ensureApi().getBlockedContacts());
+  }
+
+  async function runAccountOperation(callback) {
+    lastError.value = null;
+
+    try {
+      return await callback();
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    }
+  }
+
+  async function runChatOperation(action, options = {}) {
+    const chatId = String(options.chatId || activeChatId.value || '').trim();
+
+    if (!chatId) {
+      return null;
+    }
+
+    lastError.value = null;
+
+    try {
+      const response = await callChatOperationApi(chatId, action, options);
+
+      if (action === 'mark-read') {
+        markChatAsRead(chatId);
+      }
+
+      if (action === 'clear') {
+        messagesByChat.value = {
+          ...messagesByChat.value,
+          [chatId]: [],
+        };
+      }
+
+      await Promise.allSettled([
+        loadChats({ forceRefresh: true }),
+        loadGroups({ forceRefresh: true }),
+      ]);
+
+      return response;
+    } catch (error) {
+      lastError.value = error;
+      throw error;
+    }
+  }
+
+  function callChatOperationApi(chatId, action, options) {
+    const apiClient = ensureApi();
+
+    if (action === 'archive') {
+      return apiClient.archiveChat(chatId);
+    }
+
+    if (action === 'unarchive') {
+      return apiClient.unarchiveChat(chatId);
+    }
+
+    if (action === 'mute') {
+      return apiClient.muteChat(chatId, {
+        duration: options.duration || null,
+        unmuteDate: options.unmuteDate || null,
+      });
+    }
+
+    if (action === 'unmute') {
+      return apiClient.unmuteChat(chatId);
+    }
+
+    if (action === 'pin') {
+      return apiClient.pinChat(chatId);
+    }
+
+    if (action === 'unpin') {
+      return apiClient.unpinChat(chatId);
+    }
+
+    if (action === 'mark-read') {
+      return apiClient.markChatRead(chatId);
+    }
+
+    if (action === 'mark-unread') {
+      return apiClient.markChatUnread(chatId);
+    }
+
+    if (action === 'clear') {
+      return apiClient.clearChatMessages(chatId);
+    }
+
+    throw new Error('Unsupported chat operation.');
+  }
+
   function removeQueuedMessage(messageId) {
     if (!messageId) {
       return;
@@ -792,6 +1429,14 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       mergeMessage(chatId, message);
     }
 
+    if (isConversationRealtimeAction(action)) {
+      const conversationChatId = String(data.chatId || payload.chatId || '').trim();
+
+      if (conversationChatId && conversationChatId === activeChatId.value && !isGroupChatId(conversationChatId)) {
+        loadConversationHistory(conversationChatId).catch(() => []);
+      }
+    }
+
     if (action === 'lifecycle') {
       status.value = data.status || data.state || status.value;
       isConnected.value = data.isConnected ?? isConnected.value;
@@ -833,6 +1478,10 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
   function isMessageAckRealtimeAction(action) {
     return ['message_ack', 'message.ack', 'message_acknowledgement'].includes(String(action || ''));
+  }
+
+  function isConversationRealtimeAction(action) {
+    return String(action || '') === 'conversation';
   }
 
   function withRealtimeChatId(chatId, message) {
@@ -879,7 +1528,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return null;
     }
 
-    return chats.value.find(chat => chatMatchesPhone(chat, phoneDigits)) || null;
+    return chatList.value.find(chat => chatMatchesPhone(chat, phoneDigits)) || null;
   }
 
   function getRealtimeChatIdCandidates(chatId, message) {
@@ -1250,6 +1899,83 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       Date.now(),
       Math.floor(Date.now() / 1000)
     );
+  }
+
+  function sanitizeGroupList(list) {
+    return list
+      .filter(item => item && typeof item === 'object')
+      .map(group => {
+        const id = getChatId(group);
+
+        return applyLocalReadState({
+          ...group,
+          id,
+          chatId: id,
+          isGroup: true,
+        });
+      })
+      .filter(group => getChatId(group));
+  }
+
+  function mergeChatAndGroupLists(chatListValue, groupListValue) {
+    const byId = new Map();
+
+    chatListValue
+      .filter(chat => chat && typeof chat === 'object')
+      .forEach(chat => {
+        const id = getChatId(chat);
+
+        if (id) {
+          byId.set(id, chat);
+        }
+      });
+
+    groupListValue
+      .filter(group => group && typeof group === 'object')
+      .forEach(group => {
+        const id = getChatId(group);
+
+        if (!id) {
+          return;
+        }
+
+        byId.set(id, mergeNativeGroupIntoChat(byId.get(id), group));
+      });
+
+    return Array.from(byId.values())
+      .sort((a, b) => resolveComparableChatTimestamp(b) - resolveComparableChatTimestamp(a));
+  }
+
+  function mergeNativeGroupIntoChat(chat, group) {
+    const base = chat && typeof chat === 'object' ? chat : {};
+    const groupTimestamp = resolveComparableChatTimestamp(group);
+    const baseTimestamp = resolveComparableChatTimestamp(base);
+    const next = {
+      ...base,
+      ...group,
+      id: getChatId(group) || getChatId(base),
+      isGroup: true,
+    };
+
+    if (!group.lastMessage && base.lastMessage) {
+      next.lastMessage = base.lastMessage;
+    }
+
+    if (!group.lastMessageBody && base.lastMessageBody) {
+      next.lastMessageBody = base.lastMessageBody;
+    }
+
+    if (!group.bodyPreview && base.bodyPreview) {
+      next.bodyPreview = base.bodyPreview;
+    }
+
+    if (baseTimestamp > groupTimestamp) {
+      next.timestamp = base.timestamp || base.t || next.timestamp;
+      next.t = base.t || base.timestamp || next.t;
+      next.lastMessageTimestamp = base.lastMessageTimestamp || next.lastMessageTimestamp;
+    }
+
+    return applyLocalReadState(next);
   }
 
   function mergeIncomingChats(list) {
@@ -1687,6 +2413,20 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       }));
   }
 
+  function sanitizeConversationPreview(list) {
+    return list
+      .filter(item => item && typeof item === 'object')
+      .map(item => ({
+        id: String(item.id || item.messageId || ''),
+        messageId: String(item.messageId || item.id || ''),
+        body: String(item.body || item.bodyPreview || ''),
+        author: String(item.author || item.from || ''),
+        fromMe: !!item.fromMe,
+        timestamp: normalizeHistoryTimestamp(item.timestamp),
+      }))
+      .filter(item => item.body);
+  }
+
   function normalizeHistoryTimestamp(value) {
     if (value === null || value === undefined || value === '') {
       return null;
@@ -1734,7 +2474,10 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   return {
     status,
     isConnected,
+    qrCode,
     chats,
+    groups,
+    chatList,
     activeChat,
     activeChatId,
     activeChatName,
@@ -1746,8 +2489,11 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     messagesByChat,
     contextByChat,
     historyByChat,
+    conversationPreviewById,
     loadingStatus,
+    loadingQr,
     loadingChats,
+    loadingGroups,
     loadingMessages,
     loadingContext,
     loadingHistory,
@@ -1760,16 +2506,42 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     findChatByPhone,
     createChatFromPhone,
     loadStatus,
+    startLogin,
+    logout,
     loadChats,
+    loadGroups,
     openChat,
     loadMessages,
     loadMoreMessages,
     refreshActiveMessages,
     loadChatContext,
     loadConversationHistory,
+    loadConversationPreview,
     createContactFromActiveChat,
     loadAvatarUrl,
     sendMessage,
+    sendMedia,
+    sendLocation,
+    sendContactCard,
+    createPoll,
+    editMessage,
+    deleteMessage,
+    reactToMessage,
+    forwardMessage,
+    setMessageStarred,
+    getMessageReactions,
+    downloadMedia,
+    getPollVotes,
+    voteInPoll,
+    setAccountStatus,
+    updateProfilePicture,
+    getContactStatus,
+    getContactProfilePicture,
+    blockUser,
+    unblockUser,
+    checkNumberOnWhatsApp,
+    getBlockedContacts,
+    runChatOperation,
     retryMessage,
     flushQueuedMessages,
     handleRealtimeEvent,

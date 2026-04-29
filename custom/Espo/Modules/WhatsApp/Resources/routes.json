@@ -64,11 +64,27 @@
     }
   },
   {
+    "route": "/WhatsApp/action/conversationPreview",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "conversationPreview"
+    }
+  },
+  {
     "route": "/WhatsApp/action/getChatFolders",
     "method": "get",
     "params": {
       "controller": "WhatsApp",
       "action": "getChatFolders"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getGroupDetails",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getGroupDetails"
     }
   },
   {
@@ -88,27 +104,35 @@
     }
   },
   {
-    "route": "/WhatsApp/action/createChatFolder",
+    "route": "/WhatsApp/action/createGroup",
     "method": "post",
     "params": {
       "controller": "WhatsApp",
-      "action": "createChatFolder"
+      "action": "createGroup"
     }
   },
   {
-    "route": "/WhatsApp/action/deleteChatFolder",
+    "route": "/WhatsApp/action/leaveGroup",
     "method": "post",
     "params": {
       "controller": "WhatsApp",
-      "action": "deleteChatFolder"
+      "action": "leaveGroup"
     }
   },
   {
-    "route": "/WhatsApp/action/setChatFolderMembership",
+    "route": "/WhatsApp/action/addGroupParticipants",
     "method": "post",
     "params": {
       "controller": "WhatsApp",
-      "action": "setChatFolderMembership"
+      "action": "addGroupParticipants"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/updateGroupSetting",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "updateGroupSetting"
     }
   },
   {
@@ -117,6 +141,294 @@
     "params": {
       "controller": "WhatsApp",
       "action": "sendMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendLocation",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendLocation"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendContactCard",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendContactCard"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendImage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendImage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendVideo",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendVideo"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendAudio",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendAudio"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendVoiceNote",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendVoiceNote"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendDocument",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendDocument"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/sendSticker",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "sendSticker"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/downloadMedia",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "downloadMedia"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/editMessage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "editMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/deleteMessage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "deleteMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/reactToMessage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "reactToMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/forwardMessage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "forwardMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/starMessage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "starMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/unstarMessage",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "unstarMessage"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getMessageReactions",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getMessageReactions"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/createPoll",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "createPoll"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getPollVotes",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getPollVotes"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/voteInPoll",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "voteInPoll"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/setStatus",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "setStatus"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getContactStatus",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getContactStatus"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/updateProfilePicture",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "updateProfilePicture"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getContactProfilePicture",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getContactProfilePicture"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/blockUser",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "blockUser"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/unblockUser",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "unblockUser"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/checkNumberOnWhatsApp",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "checkNumberOnWhatsApp"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/getBlockedContacts",
+    "method": "get",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "getBlockedContacts"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/archiveChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "archiveChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/unarchiveChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "unarchiveChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/muteChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "muteChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/unmuteChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "unmuteChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/pinChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "pinChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/unpinChat",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "unpinChat"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/markChatRead",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "markChatRead"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/markChatUnread",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "markChatUnread"
+    }
+  },
+  {
+    "route": "/WhatsApp/action/clearChatMessages",
+    "method": "post",
+    "params": {
+      "controller": "WhatsApp",
+      "action": "clearChatMessages"
     }
   },
   {

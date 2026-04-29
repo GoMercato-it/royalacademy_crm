@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue';
+import { computed, ref } from 'vue';
+import ConversationPreview from './ConversationPreview.vue';
 
 const props = defineProps({
   activeChatId: {
@@ -30,11 +31,44 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  actionBusy: {
+    type: Boolean,
+    default: false,
+  },
+  activeChat: {
+    type: Object,
+    default: null,
+  },
 });
 
-const emit = defineEmits(['open-record', 'create-contact', 'jump-conversation']);
+const emit = defineEmits(['open-record', 'create-contact', 'jump-conversation', 'chat-operation', 'contact-operation']);
+
+const chatActionsOpen = ref(false);
+const contactActionsOpen = ref(false);
 
 const isGroupChat = computed(() => String(props.activeChatId || '').endsWith('@g.us'));
+
+const chatIsArchived = computed(() => {
+  const chat = props.activeChat;
+  return !!(chat && (chat.archived || chat.isArchived));
+});
+
+const chatIsMuted = computed(() => {
+  const chat = props.activeChat;
+  return !!(chat && (chat.isMuted || chat.muteExpiration > 0));
+});
+
+const chatIsPinned = computed(() => {
+  const chat = props.activeChat;
+  return !!(chat && (chat.pinned || chat.isPinned));
+});
+
+const chatIsUnread = computed(() => {
+  const chat = props.activeChat;
+  if (!chat) return false;
+  const unread = chat.unreadCount ?? chat.unread ?? 0;
+  return Number(unread) > 0;
+});
 
 const title = computed(() => {
   const context = props.context || {};
@@ -250,6 +284,21 @@ function shouldSkipPhoneLikeLabel(label, chatId) {
 function isGenericConversationName(value) {
   return ['whatsapp contact', 'whatsapp'].includes(String(value || '').trim().toLowerCase());
 }
+
+function emitChatOperation(action) {
+  emit('chat-operation', {
+    action,
+    chatId: props.activeChatId,
+  });
+}
+
+function emitContactOperation(action) {
+  emit('contact-operation', {
+    action,
+    contactId: props.activeChatId,
+    phone: phone.value,
+  });
+}
 </script>
 
 <template>
@@ -320,6 +369,84 @@ function isGenericConversationName(value) {
             </button>
           </div>
         </template>
+
+        <div class="wa-action-section">
+          <button
+            type="button"
+            class="wa-actions-toggle"
+            :class="{ 'is-open': chatActionsOpen }"
+            :aria-expanded="chatActionsOpen"
+            aria-label="Toggle chat actions"
+            @click="chatActionsOpen = !chatActionsOpen"
+          >
+            <span>Chat actions</span>
+            <span class="fas fa-chevron-down"></span>
+          </button>
+          <div class="wa-actions-dropdown" :class="{ 'is-open': chatActionsOpen }">
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitChatOperation(chatIsArchived ? 'unarchive' : 'archive')">
+              <span class="fas" :class="chatIsArchived ? 'fa-box-open' : 'fa-box-archive'"></span>
+              <span>{{ chatIsArchived ? 'Unarchive' : 'Archive' }}</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitChatOperation(chatIsMuted ? 'unmute' : 'mute')">
+              <span class="fas" :class="chatIsMuted ? 'fa-bell' : 'fa-bell-slash'"></span>
+              <span>{{ chatIsMuted ? 'Unmute' : 'Mute' }}</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitChatOperation(chatIsPinned ? 'unpin' : 'pin')">
+              <span class="fas" :class="chatIsPinned ? 'fa-link-slash' : 'fa-thumbtack'"></span>
+              <span>{{ chatIsPinned ? 'Unpin' : 'Pin' }}</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitChatOperation(chatIsUnread ? 'mark-read' : 'mark-unread')">
+              <span class="fas" :class="chatIsUnread ? 'fa-envelope-open' : 'fa-envelope'"></span>
+              <span>{{ chatIsUnread ? 'Mark read' : 'Mark unread' }}</span>
+            </button>
+            <hr class="wa-dropdown-divider" />
+            <button type="button" class="wa-dropdown-item is-danger" :disabled="actionBusy" @click="emitChatOperation('clear')">
+              <span class="fas fa-trash-can"></span>
+              <span>Clear messages</span>
+            </button>
+          </div>
+        </div>
+
+        <div v-if="!isGroupChat" class="wa-action-section">
+          <button
+            type="button"
+            class="wa-actions-toggle"
+            :class="{ 'is-open': contactActionsOpen }"
+            :aria-expanded="contactActionsOpen"
+            aria-label="Toggle contact actions"
+            @click="contactActionsOpen = !contactActionsOpen"
+          >
+            <span>Contact actions</span>
+            <span class="fas fa-chevron-down"></span>
+          </button>
+          <div class="wa-actions-dropdown" :class="{ 'is-open': contactActionsOpen }">
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitContactOperation('status')">
+              <span class="fas fa-circle-info"></span>
+              <span>Get status</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitContactOperation('profile-picture')">
+              <span class="fas fa-address-card"></span>
+              <span>Profile picture</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitContactOperation('check-number')">
+              <span class="fas fa-phone-volume"></span>
+              <span>Check number</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitContactOperation('blocked-contacts')">
+              <span class="fas fa-list"></span>
+              <span>Blocked contacts</span>
+            </button>
+            <hr class="wa-dropdown-divider" />
+            <button type="button" class="wa-dropdown-item is-danger" :disabled="actionBusy" @click="emitContactOperation('block')">
+              <span class="fas fa-ban"></span>
+              <span>Block</span>
+            </button>
+            <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitContactOperation('unblock')">
+              <span class="fas fa-unlock"></span>
+              <span>Unblock</span>
+            </button>
+          </div>
+        </div>
       </template>
     </section>
 
@@ -343,21 +470,25 @@ function isGenericConversationName(value) {
       </div>
 
       <div v-else class="wa-history-list">
-        <button
+        <ConversationPreview
           v-for="item in history"
           :key="item.id || item.firstMessageMessageId || item.startedAt"
-          type="button"
-          class="wa-history-item"
-          :class="{ 'is-disabled': !item.firstMessageMessageId }"
-          :aria-disabled="!item.firstMessageMessageId"
-          :aria-label="`Open conversation from ${formatDate(item.startedAt || item.createdAt) || 'unknown date'}`"
-          @click="emit('jump-conversation', item.firstMessageMessageId)"
+          :conversation="item"
         >
-          <span class="wa-history-range">{{ formatRange(item) }}</span>
-          <span class="wa-history-date">{{ formatDate(item.startedAt || item.createdAt) }}</span>
-          <strong>{{ getConversationName(item) }}</strong>
-          <span>{{ item.status || 'closed' }} · {{ item.messageCount || 0 }} msg</span>
-        </button>
+          <button
+            type="button"
+            class="wa-history-item"
+            :class="{ 'is-disabled': !item.firstMessageMessageId }"
+            :aria-disabled="!item.firstMessageMessageId"
+            :aria-label="`Open conversation from ${formatDate(item.startedAt || item.createdAt) || 'unknown date'}`"
+            @click="emit('jump-conversation', item.firstMessageMessageId)"
+          >
+            <span class="wa-history-range">{{ formatRange(item) }}</span>
+            <span class="wa-history-date">{{ formatDate(item.startedAt || item.createdAt) }}</span>
+            <strong>{{ getConversationName(item) }}</strong>
+            <span>{{ item.status || 'closed' }} · {{ item.messageCount || 0 }} msg</span>
+          </button>
+        </ConversationPreview>
       </div>
     </section>
   </aside>

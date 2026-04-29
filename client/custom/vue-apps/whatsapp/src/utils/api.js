@@ -123,8 +123,53 @@ export class EspoApiClient {
     return this.get('WhatsApp/action/status');
   }
 
+  login() {
+    return this.get('WhatsApp/action/login');
+  }
+
+  logout() {
+    return this.post('WhatsApp/action/logout');
+  }
+
   getChats({ refresh = false } = {}) {
     return this.get('WhatsApp/action/getChats', refresh ? { refresh: true } : {});
+  }
+
+  getGroups({ forceRefresh = false } = {}) {
+    return this.get('WhatsApp/action/getChatFolders', forceRefresh ? { forceRefresh: true } : {});
+  }
+
+  getGroupDetails(groupId) {
+    return this.get('WhatsApp/action/getGroupDetails', {
+      groupId,
+    });
+  }
+
+  createGroup(name, participants) {
+    return this.post('WhatsApp/action/createGroup', {
+      name,
+      participants,
+    });
+  }
+
+  leaveGroup(groupId) {
+    return this.post('WhatsApp/action/leaveGroup', {
+      groupId,
+    });
+  }
+
+  addGroupParticipants(groupId, participants) {
+    return this.post('WhatsApp/action/addGroupParticipants', {
+      groupId,
+      participants,
+    });
+  }
+
+  updateGroupSetting(groupId, setting) {
+    return this.post('WhatsApp/action/updateGroupSetting', {
+      groupId,
+      setting,
+    });
   }
 
   getChatMessages(chatId, { limit = 50 } = {}) {
@@ -148,6 +193,13 @@ export class EspoApiClient {
     });
   }
 
+  getConversationPreview(conversationId, { limit = 5 } = {}) {
+    return this.get('WhatsApp/action/conversationPreview', {
+      conversationId,
+      limit,
+    });
+  }
+
   getProfilePic(chatId) {
     return this.get('WhatsApp/action/getProfilePic', {
       id: chatId,
@@ -158,6 +210,257 @@ export class EspoApiClient {
     return this.post('WhatsApp/action/sendMessage', {
       chatId,
       message,
+    });
+  }
+
+  sendLocation(chatId, latitude, longitude, description = '') {
+    return this.post('WhatsApp/action/sendLocation', {
+      chatId,
+      latitude,
+      longitude,
+      description,
+    });
+  }
+
+  sendContactCard(chatId, contactId) {
+    return this.post('WhatsApp/action/sendContactCard', {
+      chatId,
+      contactId,
+    });
+  }
+
+  sendImage(chatId, imageUrl, caption = '') {
+    return this.post('WhatsApp/action/sendImage', {
+      chatId,
+      imageUrl,
+      caption,
+    });
+  }
+
+  sendVideo(chatId, videoUrl, caption = '') {
+    return this.post('WhatsApp/action/sendVideo', {
+      chatId,
+      videoUrl,
+      caption,
+    });
+  }
+
+  sendAudio(chatId, audioUrl, { asVoice = false } = {}) {
+    return this.post('WhatsApp/action/sendAudio', {
+      chatId,
+      audioUrl,
+      asVoice,
+    });
+  }
+
+  sendVoiceNote(chatId, audioUrl) {
+    return this.post('WhatsApp/action/sendVoiceNote', {
+      chatId,
+      audioUrl,
+    });
+  }
+
+  sendDocument(chatId, documentUrl, filename, caption = '') {
+    return this.post('WhatsApp/action/sendDocument', {
+      chatId,
+      documentUrl,
+      filename,
+      caption,
+    });
+  }
+
+  sendSticker(chatId, stickerUrl) {
+    return this.post('WhatsApp/action/sendSticker', {
+      chatId,
+      stickerUrl,
+    });
+  }
+
+  downloadMedia(chatId, messageId) {
+    return this.post('WhatsApp/action/downloadMedia', {
+      chatId,
+      messageId,
+    });
+  }
+
+  editMessage(chatId, messageId, content) {
+    return this.post('WhatsApp/action/editMessage', {
+      chatId,
+      messageId,
+      content,
+    });
+  }
+
+  deleteMessage(chatId, messageId, { everyone = false, clearMedia = false } = {}) {
+    return this.post('WhatsApp/action/deleteMessage', {
+      chatId,
+      messageId,
+      everyone,
+      clearMedia,
+    });
+  }
+
+  reactToMessage(chatId, messageId, reaction) {
+    return this.post('WhatsApp/action/reactToMessage', {
+      chatId,
+      messageId,
+      reaction,
+    });
+  }
+
+  forwardMessage(chatId, messageId, destinationChatId) {
+    return this.post('WhatsApp/action/forwardMessage', {
+      chatId,
+      messageId,
+      destinationChatId,
+    });
+  }
+
+  starMessage(chatId, messageId) {
+    return this.post('WhatsApp/action/starMessage', {
+      chatId,
+      messageId,
+    });
+  }
+
+  unstarMessage(chatId, messageId) {
+    return this.post('WhatsApp/action/unstarMessage', {
+      chatId,
+      messageId,
+    });
+  }
+
+  getMessageReactions(chatId, messageId) {
+    return this.post('WhatsApp/action/getMessageReactions', {
+      chatId,
+      messageId,
+    });
+  }
+
+  createPoll(chatId, question, pollOptions, config = {}) {
+    return this.post('WhatsApp/action/createPoll', {
+      chatId,
+      question,
+      pollOptions,
+      config,
+    });
+  }
+
+  getPollVotes(chatId, messageId) {
+    return this.post('WhatsApp/action/getPollVotes', {
+      chatId,
+      messageId,
+    });
+  }
+
+  voteInPoll(chatId, messageId, selectedOptions) {
+    return this.post('WhatsApp/action/voteInPoll', {
+      chatId,
+      messageId,
+      selectedOptions,
+    });
+  }
+
+  setStatus(status) {
+    return this.post('WhatsApp/action/setStatus', {
+      status,
+    });
+  }
+
+  getContactStatus(contactId) {
+    return this.get('WhatsApp/action/getContactStatus', {
+      contactId,
+    });
+  }
+
+  updateProfilePicture(pictureMimetype, pictureData) {
+    return this.post('WhatsApp/action/updateProfilePicture', {
+      pictureMimetype,
+      pictureData,
+    });
+  }
+
+  getContactProfilePicture(contactId) {
+    return this.get('WhatsApp/action/getContactProfilePicture', {
+      contactId,
+    });
+  }
+
+  blockUser(contactId) {
+    return this.post('WhatsApp/action/blockUser', {
+      contactId,
+    });
+  }
+
+  unblockUser(contactId) {
+    return this.post('WhatsApp/action/unblockUser', {
+      contactId,
+    });
+  }
+
+  checkNumberOnWhatsApp(number) {
+    return this.post('WhatsApp/action/checkNumberOnWhatsApp', {
+      number,
+    });
+  }
+
+  getBlockedContacts() {
+    return this.get('WhatsApp/action/getBlockedContacts');
+  }
+
+  archiveChat(chatId) {
+    return this.post('WhatsApp/action/archiveChat', {
+      chatId,
+    });
+  }
+
+  unarchiveChat(chatId) {
+    return this.post('WhatsApp/action/unarchiveChat', {
+      chatId,
+    });
+  }
+
+  muteChat(chatId, { unmuteDate = null, duration = null } = {}) {
+    return this.post('WhatsApp/action/muteChat', {
+      chatId,
+      unmuteDate,
+      duration,
+    });
+  }
+
+  unmuteChat(chatId) {
+    return this.post('WhatsApp/action/unmuteChat', {
+      chatId,
+    });
+  }
+
+  pinChat(chatId) {
+    return this.post('WhatsApp/action/pinChat', {
+      chatId,
+    });
+  }
+
+  unpinChat(chatId) {
+    return this.post('WhatsApp/action/unpinChat', {
+      chatId,
+    });
+  }
+
+  markChatRead(chatId) {
+    return this.post('WhatsApp/action/markChatRead', {
+      chatId,
+    });
+  }
+
+  markChatUnread(chatId) {
+    return this.post('WhatsApp/action/markChatUnread', {
+      chatId,
+    });
+  }
+
+  clearChatMessages(chatId) {
+    return this.post('WhatsApp/action/clearChatMessages', {
+      chatId,
     });
   }
 
