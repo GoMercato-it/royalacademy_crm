@@ -189,6 +189,18 @@ class ConversationTrackingService
         return $list;
     }
 
+    public function getPreviewMessages(string $conversationId, int $limit = 5): array
+    {
+        $limit = max(1, min(10, $limit));
+        $conversation = $this->entityManager->getEntityById('WhatsAppConversation', $conversationId);
+
+        if (!$conversation) {
+            return [];
+        }
+
+        return $this->loadConversationPreviewMessages($conversation, $limit);
+    }
+
     public function getChatContext(string $chatId, ?string $knownPhone = null): array
     {
         $participantWaId = $this->normalizeParticipantWaId($chatId);
@@ -1044,8 +1056,9 @@ class ConversationTrackingService
         return $score;
     }
 
-    private function loadConversationPreviewMessages(Entity $conversation): array
+    private function loadConversationPreviewMessages(Entity $conversation, int $limit = 5): array
     {
+        $limit = max(1, min(10, $limit));
         $conversationId = (string) ($conversation->getId() ?? '');
 
         if ($conversationId === '') {
@@ -1056,7 +1069,7 @@ class ConversationTrackingService
             ->getRepository('WhatsAppMessage')
             ->where(['conversationId' => $conversationId])
             ->order('timestamp', 'ASC')
-            ->limit(5)
+            ->limit(0, $limit)
             ->find();
 
         if (!count($collection)) {
@@ -1073,20 +1086,45 @@ class ConversationTrackingService
             }
 
             $list[] = [
+                'id' => (string) ($message->get('messageId') ?: $message->getId()),
                 'messageId' => (string) ($message->get('messageId') ?: $message->getId()),
                 'body' => mb_substr($body, 0, 160),
+                'author' => $this->resolveMessageAuthor($message),
                 'fromMe' => (bool) ($message->get('fromMe') ?? false),
                 'timestamp' => $message->get('timestamp')
                     ? (strtotime((string) $message->get('timestamp')) ?: null)
                     : null,
             ];
 
-            if (count($list) >= 5) {
+            if (count($list) >= $limit) {
                 break;
             }
         }
 
         return $list;
+    }
+
+    private function resolveMessageAuthor(Entity $message): string
+    {
+        if ((bool) ($message->get('fromMe') ?? false)) {
+            return 'You';
+        }
+
+        $payloadMeta = $message->get('payloadMeta') ?: [];
+
+        if (is_object($payloadMeta)) {
+            $payloadMeta = get_object_vars($payloadMeta);
+        }
+
+        if (is_array($payloadMeta)) {
+            $author = trim((string) ($payloadMeta['author'] ?? $payloadMeta['from'] ?? ''));
+
+            if ($author !== '') {
+                return $author;
+            }
+        }
+
+        return 'Contact';
     }
 
     /**

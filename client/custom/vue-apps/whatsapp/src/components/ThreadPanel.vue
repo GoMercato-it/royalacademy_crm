@@ -24,7 +24,7 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['refresh', 'send']);
+const emit = defineEmits(['send']);
 const draft = ref('');
 
 const title = computed(() => props.activeChatName || formatChatId(props.activeChatId));
@@ -108,9 +108,6 @@ function formatChatId(chatId) {
         <h2>{{ title }}</h2>
         <p>{{ formatChatId(activeChatId) }}</p>
       </div>
-      <button type="button" class="wa-icon-button" title="Refresh messages" @click="emit('refresh')">
-        <span class="fas fa-rotate-right"></span>
-      </button>
     </div>
 
     <div v-if="!activeChatId" class="wa-thread-empty">

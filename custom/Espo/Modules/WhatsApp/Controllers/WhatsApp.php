@@ -11,9 +11,10 @@ use Espo\Core\Utils\Config\ConfigWriter;
 use Espo\Core\Utils\Log;
 use Espo\Modules\WhatsApp\Core\WhatsAppClient;
 use Espo\Modules\WhatsApp\Services\AvatarStorageService;
-use Espo\Modules\WhatsApp\Services\ChatFolderService;
 use Espo\Modules\WhatsApp\Services\ChatListSnapshotService;
 use Espo\Modules\WhatsApp\Services\ConversationTrackingService;
+use Espo\Modules\WhatsApp\Services\GroupService;
+use Espo\Modules\WhatsApp\Services\MediaService;
 use Espo\Modules\WhatsApp\Services\MessageDispatchService;
 use Espo\Modules\WhatsApp\Services\SessionLifecycleService;
 use Espo\Modules\WhatsApp\Services\WebSocketService;
@@ -25,7 +26,8 @@ class WhatsApp
         private WhatsAppClient $whatsAppClient,
         private MessageDispatchService $messageDispatchService,
         private ConversationTrackingService $conversationTrackingService,
-        private ChatFolderService $chatFolderService,
+        private GroupService $groupService,
+        private MediaService $mediaService,
         private ChatListSnapshotService $chatListSnapshotService,
         private SessionLifecycleService $sessionLifecycleService,
         private AvatarStorageService $avatarStorageService,
@@ -181,11 +183,43 @@ class WhatsApp
         ];
     }
 
-    public function getActionGetChatFolders(Request $request, Response $response): array
+    public function getActionConversationPreview(Request $request, Response $response): array
     {
+        $conversationId = $request->getQueryParam('conversationId');
+
+        if (!$conversationId) {
+            throw new BadRequest('conversationId is required');
+        }
+
+        $limit = (int) ($request->getQueryParam('limit') ?? 5);
+
         return [
             'success' => true,
-            'list' => $this->chatFolderService->getFolderList(),
+            'messages' => $this->conversationTrackingService->getPreviewMessages($conversationId, $limit),
+        ];
+    }
+
+    public function getActionGetChatFolders(Request $request, Response $response): array
+    {
+        $forceRefresh = filter_var($request->getQueryParam('forceRefresh') ?? false, FILTER_VALIDATE_BOOL);
+
+        return [
+            'success' => true,
+            'list' => $this->groupService->getAllGroups($forceRefresh),
+        ];
+    }
+
+    public function getActionGetGroupDetails(Request $request, Response $response): array
+    {
+        $groupId = trim((string) ($request->getQueryParam('groupId') ?? ''));
+
+        if ($groupId === '') {
+            throw new BadRequest('groupId is required');
+        }
+
+        return [
+            'success' => true,
+            'data' => $this->groupService->getGroupDetails($groupId),
         ];
     }
 
@@ -267,6 +301,34 @@ class WhatsApp
         return $result;
     }
 
+    public function postActionSendLocation(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $latitude = $this->readPayloadFloat($payload, ['latitude', 'lat']);
+        $longitude = $this->readPayloadFloat($payload, ['longitude', 'lng', 'lon']);
+
+        if ($latitude === null || $longitude === null) {
+            throw new BadRequest('latitude and longitude are required');
+        }
+
+        return $this->whatsAppClient->sendLocation(
+            $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId'),
+            $latitude,
+            $longitude,
+            $this->readPayloadString($payload, ['description', 'name'])
+        );
+    }
+
+    public function postActionSendContactCard(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->sendContactCard(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['contactId', 'phone'], 'contactId')
+        );
+    }
+
     public function postActionCreateContactFromChat(Request $request, Response $response): array
     {
         $data = $request->getParsedBody();
@@ -284,66 +346,383 @@ class WhatsApp
         ];
     }
 
-    public function postActionCreateChatFolder(Request $request, Response $response): array
+    public function postActionCreateGroup(Request $request, Response $response): array
     {
         $data = $request->getParsedBody();
-        $name = trim((string) ($data->name ?? ''));
+        $name = trim((string) ($data->name ?? $data->title ?? ''));
+        $participants = $this->normalizeStringList($data->participants ?? []);
 
-        if ($name === '') {
-            throw new BadRequest('name is required');
+        if ($name === '' || $participants === []) {
+            throw new BadRequest('name and participants are required');
         }
 
-        try {
-            return [
-                'success' => true,
-                'list' => $this->chatFolderService->createFolder($name),
-            ];
-        } catch (\RuntimeException $e) {
-            throw new BadRequest($e->getMessage());
-        }
+        return [
+            'success' => true,
+            'data' => $this->groupService->createGroup($name, $participants),
+        ];
     }
 
-    public function postActionDeleteChatFolder(Request $request, Response $response): array
+    public function postActionLeaveGroup(Request $request, Response $response): array
     {
         $data = $request->getParsedBody();
-        $folderId = trim((string) ($data->folderId ?? ''));
+        $groupId = trim((string) ($data->groupId ?? $data->chatId ?? ''));
 
-        if ($folderId === '') {
-            throw new BadRequest('folderId is required');
+        if ($groupId === '') {
+            throw new BadRequest('groupId is required');
         }
 
-        try {
-            return [
-                'success' => true,
-                'list' => $this->chatFolderService->deleteFolder($folderId),
-            ];
-        } catch (\RuntimeException $e) {
-            throw new BadRequest($e->getMessage());
-        }
+        return [
+            'success' => true,
+            'data' => $this->groupService->leaveGroup($groupId),
+        ];
     }
 
-    public function postActionSetChatFolderMembership(Request $request, Response $response): array
+    public function postActionAddGroupParticipants(Request $request, Response $response): array
     {
         $data = $request->getParsedBody();
-        $folderId = trim((string) ($data->folderId ?? ''));
-        $chatId = trim((string) ($data->chatId ?? ''));
+        $groupId = trim((string) ($data->groupId ?? $data->chatId ?? ''));
+        $participants = $this->normalizeStringList($data->participants ?? $data->participantIds ?? []);
 
-        if ($folderId === '' || $chatId === '') {
-            throw new BadRequest('folderId and chatId are required');
+        if ($groupId === '' || $participants === []) {
+            throw new BadRequest('groupId and participants are required');
         }
 
-        try {
-            return [
-                'success' => true,
-                'list' => $this->chatFolderService->setFolderMembership(
-                    $folderId,
-                    $chatId,
-                    (bool) ($data->enabled ?? false)
-                ),
-            ];
-        } catch (\RuntimeException $e) {
-            throw new BadRequest($e->getMessage());
+        return [
+            'success' => true,
+            'data' => $this->groupService->addGroupParticipants($groupId, $participants),
+        ];
+    }
+
+    public function postActionUpdateGroupSetting(Request $request, Response $response): array
+    {
+        $data = $request->getParsedBody();
+        $groupId = trim((string) ($data->groupId ?? $data->chatId ?? ''));
+        $setting = trim((string) ($data->setting ?? ''));
+
+        if ($groupId === '' || $setting === '') {
+            throw new BadRequest('groupId and setting are required');
         }
+
+        return [
+            'success' => true,
+            'data' => $this->groupService->updateGroupSetting($groupId, $setting),
+        ];
+    }
+
+    public function postActionSendImage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId');
+        $imageUrl = $this->requirePayloadString($payload, ['imageUrl', 'url'], 'imageUrl');
+
+        return $this->mediaService->sendImage(
+            $chatId,
+            $imageUrl,
+            $this->readPayloadString($payload, ['caption'])
+        );
+    }
+
+    public function postActionSendVideo(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId');
+        $videoUrl = $this->requirePayloadString($payload, ['videoUrl', 'url'], 'videoUrl');
+
+        return $this->mediaService->sendVideo(
+            $chatId,
+            $videoUrl,
+            $this->readPayloadString($payload, ['caption'])
+        );
+    }
+
+    public function postActionSendAudio(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId');
+        $audioUrl = $this->requirePayloadString($payload, ['audioUrl', 'url'], 'audioUrl');
+
+        return $this->mediaService->sendAudio($chatId, $audioUrl, $this->readPayloadBool($payload, 'asVoice'));
+    }
+
+    public function postActionSendVoiceNote(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId');
+        $audioUrl = $this->requirePayloadString($payload, ['audioUrl', 'url'], 'audioUrl');
+
+        return $this->mediaService->sendVoiceNote($chatId, $audioUrl);
+    }
+
+    public function postActionSendDocument(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId');
+        $documentUrl = $this->requirePayloadString($payload, ['documentUrl', 'url'], 'documentUrl');
+        $filename = $this->requirePayloadString($payload, ['filename', 'fileName'], 'filename');
+
+        return $this->mediaService->sendDocument(
+            $chatId,
+            $documentUrl,
+            $filename,
+            $this->readPayloadString($payload, ['caption'])
+        );
+    }
+
+    public function postActionSendSticker(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId', 'phone'], 'chatId');
+        $stickerUrl = $this->requirePayloadString($payload, ['stickerUrl', 'url'], 'stickerUrl');
+
+        return $this->mediaService->sendSticker($chatId, $stickerUrl);
+    }
+
+    public function postActionDownloadMedia(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->mediaService->downloadMedia(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId')
+        );
+    }
+
+    public function postActionEditMessage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->editMessage(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId'),
+            $this->requirePayloadString($payload, ['content', 'newText', 'message'], 'content')
+        );
+    }
+
+    public function postActionDeleteMessage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->deleteMessage(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId'),
+            $this->readPayloadBool($payload, 'everyone', $this->readPayloadBool($payload, 'forEveryone')),
+            $this->readPayloadBool($payload, 'clearMedia')
+        );
+    }
+
+    public function postActionReactToMessage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->sendReaction(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId'),
+            $this->readPayloadString($payload, ['reaction', 'emoji']) ?? ''
+        );
+    }
+
+    public function postActionForwardMessage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->forwardMessage(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId'),
+            $this->requirePayloadString($payload, ['destinationChatId', 'toChatId'], 'destinationChatId')
+        );
+    }
+
+    public function postActionStarMessage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->starMessage(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId')
+        );
+    }
+
+    public function postActionUnstarMessage(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->unstarMessage(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId')
+        );
+    }
+
+    public function postActionGetMessageReactions(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->getMessageReactions(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId')
+        );
+    }
+
+    public function postActionCreatePoll(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $chatId = $this->requirePayloadString($payload, ['chatId'], 'chatId');
+        $question = $this->requirePayloadString($payload, ['question', 'pollName'], 'question');
+        $pollOptions = $this->normalizeStringList($payload['pollOptions'] ?? $payload['options'] ?? []);
+
+        if ($pollOptions === []) {
+            throw new BadRequest('pollOptions are required');
+        }
+
+        $config = $payload['config'] ?? [];
+
+        return $this->whatsAppClient->createPoll($chatId, $question, $pollOptions, is_array($config) ? $config : []);
+    }
+
+    public function postActionGetPollVotes(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->getPollVotes(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId')
+        );
+    }
+
+    public function postActionVoteInPoll(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $selectedOptions = $this->normalizeStringList($payload['selectedOptions'] ?? $payload['options'] ?? []);
+
+        if ($selectedOptions === []) {
+            throw new BadRequest('selectedOptions are required');
+        }
+
+        return $this->whatsAppClient->voteInPoll(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $this->requirePayloadString($payload, ['messageId'], 'messageId'),
+            $selectedOptions
+        );
+    }
+
+    public function postActionSetStatus(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->setStatus($this->requirePayloadString($payload, ['status'], 'status'));
+    }
+
+    public function getActionGetContactStatus(Request $request, Response $response): array
+    {
+        $contactId = trim((string) ($request->getQueryParam('contactId') ?? $request->getQueryParam('id') ?? ''));
+
+        if ($contactId === '') {
+            throw new BadRequest('contactId is required');
+        }
+
+        return $this->whatsAppClient->getStatus($contactId);
+    }
+
+    public function postActionUpdateProfilePicture(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->updateProfilePicture(
+            $this->requirePayloadString($payload, ['pictureMimetype', 'mimetype'], 'pictureMimetype'),
+            $this->requirePayloadString($payload, ['pictureData', 'data'], 'pictureData')
+        );
+    }
+
+    public function getActionGetContactProfilePicture(Request $request, Response $response): array
+    {
+        $contactId = trim((string) ($request->getQueryParam('contactId') ?? $request->getQueryParam('id') ?? ''));
+
+        if ($contactId === '') {
+            throw new BadRequest('contactId is required');
+        }
+
+        return $this->whatsAppClient->getContactProfilePicture($contactId);
+    }
+
+    public function postActionBlockUser(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->blockUser($this->requirePayloadString($payload, ['contactId', 'chatId'], 'contactId'));
+    }
+
+    public function postActionUnblockUser(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->unblockUser($this->requirePayloadString($payload, ['contactId', 'chatId'], 'contactId'));
+    }
+
+    public function postActionCheckNumberOnWhatsApp(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+
+        return $this->whatsAppClient->checkNumberOnWhatsApp($this->requirePayloadString($payload, ['number', 'phone'], 'number'));
+    }
+
+    public function getActionGetBlockedContacts(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->getBlockedContacts();
+    }
+
+    public function postActionArchiveChat(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->archiveChat($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionUnarchiveChat(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->unarchiveChat($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionMuteChat(Request $request, Response $response): array
+    {
+        $payload = $this->getPayload($request);
+        $unmuteTimestamp = $this->readPayloadInt($payload, ['unmuteDate', 'unmuteTimestamp']);
+        $duration = $this->readPayloadInt($payload, ['duration']);
+
+        if ($unmuteTimestamp === null && $duration !== null && $duration > 0) {
+            $unmuteTimestamp = time() + $duration;
+        }
+
+        return $this->whatsAppClient->muteChat(
+            $this->requirePayloadString($payload, ['chatId'], 'chatId'),
+            $unmuteTimestamp
+        );
+    }
+
+    public function postActionUnmuteChat(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->unmuteChat($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionPinChat(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->pinChat($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionUnpinChat(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->unpinChat($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionMarkChatRead(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->markChatRead($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionMarkChatUnread(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->markChatUnread($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
+    }
+
+    public function postActionClearChatMessages(Request $request, Response $response): array
+    {
+        return $this->whatsAppClient->clearChatMessages($this->requirePayloadString($this->getPayload($request), ['chatId'], 'chatId'));
     }
 
     public function postActionExecuteAction(Request $request, Response $response): array
@@ -416,6 +795,127 @@ class WhatsApp
         }
 
         $this->configWriter->set('tabList', $tabList);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function getPayload(Request $request): array
+    {
+        $data = $request->getParsedBody();
+
+        if (is_array($data)) {
+            return $data;
+        }
+
+        if (is_object($data)) {
+            return get_object_vars($data);
+        }
+
+        return [];
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param string[] $keys
+     */
+    private function requirePayloadString(array $payload, array $keys, string $fieldName): string
+    {
+        $value = $this->readPayloadString($payload, $keys);
+
+        if ($value === null || $value === '') {
+            throw new BadRequest($fieldName . ' is required');
+        }
+
+        return $value;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param string[] $keys
+     */
+    private function readPayloadString(array $payload, array $keys): ?string
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $payload)) {
+                continue;
+            }
+
+            $value = $payload[$key];
+
+            if (is_array($value) || is_object($value)) {
+                continue;
+            }
+
+            return trim((string) $value);
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     */
+    private function readPayloadBool(array $payload, string $key, bool $default = false): bool
+    {
+        if (!array_key_exists($key, $payload)) {
+            return $default;
+        }
+
+        return filter_var($payload[$key], FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? $default;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param string[] $keys
+     */
+    private function readPayloadInt(array $payload, array $keys): ?int
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $payload) || $payload[$key] === '' || $payload[$key] === null) {
+                continue;
+            }
+
+            if (is_numeric($payload[$key])) {
+                return (int) $payload[$key];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string, mixed> $payload
+     * @param string[] $keys
+     */
+    private function readPayloadFloat(array $payload, array $keys): ?float
+    {
+        foreach ($keys as $key) {
+            if (!array_key_exists($key, $payload) || $payload[$key] === '' || $payload[$key] === null) {
+                continue;
+            }
+
+            if (is_numeric($payload[$key])) {
+                return (float) $payload[$key];
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @return string[]
+     */
+    private function normalizeStringList(mixed $value): array
+    {
+        if (!is_array($value)) {
+            return [];
+        }
+
+        return array_values(array_unique(array_filter(array_map(
+            fn ($item): string => trim((string) $item),
+            $value
+        ))));
     }
 
     public function postActionWebhook(Request $request, Response $response): array

@@ -1,5 +1,5 @@
 <script setup>
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue';
 
 const props = defineProps({
   activeChatId: {
@@ -24,9 +24,26 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['load-more', 'refresh', 'retry-message']);
+const emit = defineEmits(['load-more', 'retry-message', 'message-action']);
 const listRef = ref(null);
+const openMenuId = ref(null);
+const emojiPickerMessageId = ref(null);
+const expandedEmojiPickerMessageId = ref(null);
+const editingMessageId = ref(null);
+const editText = ref('');
+const deletingMessageId = ref(null);
+const editInputRef = ref(null);
 let lastLoadMoreAt = 0;
+
+const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+const EMOJI_REACTION_CHOICES = [
+  '👍', '👎', '❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍',
+  '😀', '😄', '😁', '😂', '🤣', '😊', '😍', '😘', '😎', '🤩',
+  '😮', '😯', '😲', '😳', '🥹', '😢', '😭', '😤', '😡', '🤯',
+  '👏', '🙌', '🙏', '🤝', '💪', '👌', '✌️', '🤞', '🤟', '🤘',
+  '🔥', '✨', '🎉', '🥳', '💯', '✅', '⭐', '🌟', '🚀', '👀',
+  '☕', '🍕', '🍾', '🎁', '🏆', '📌', '💡', '🫡', '🤔', '🤗',
+];
 
 const title = computed(() => props.activeChatName || (isLidChatId(props.activeChatId) ? 'WhatsApp contact' : formatChatId(props.activeChatId)));
 const subtitle = computed(() => formatChatId(props.activeChatId));
@@ -58,6 +75,11 @@ const groupedMessages = computed(() => {
 });
 
 watch(() => props.activeChatId, () => {
+  openMenuId.value = null;
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+  editingMessageId.value = null;
+  deletingMessageId.value = null;
   scrollToBottom();
 });
 
@@ -75,6 +97,35 @@ watch(() => props.targetMessageId, messageId => {
   if (messageId) {
     scrollToMessage(messageId);
   }
+});
+
+let skipNextOutsideClick = false;
+
+function handleClickOutside(event) {
+  if (skipNextOutsideClick) {
+    skipNextOutsideClick = false;
+    return;
+  }
+
+  const target = event.target;
+
+  if (target.closest('.wa-msg-menu') || target.closest('.wa-msg-chevron') || target.closest('.wa-emoji-picker') || target.closest('.wa-inline-edit') || target.closest('.wa-delete-confirm')) {
+    return;
+  }
+
+  openMenuId.value = null;
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+  editingMessageId.value = null;
+  deletingMessageId.value = null;
+}
+
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside);
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', handleClickOutside);
 });
 
 function handleScroll() {
@@ -160,6 +211,25 @@ function getMessageBody(message) {
     message.caption ||
     (message.type && message.type !== 'chat' ? `[${message.type}]` : '') ||
     (message.hasMedia ? '[Media]' : '');
+}
+
+function getReactions(message) {
+  if (!message) return {};
+  const meta = message.payloadMeta || {};
+  if (meta.reactions && Array.isArray(meta.reactions)) {
+    return meta.reactions.reduce((acc, r) => {
+      if (r.reaction) {
+        acc[r.reaction] = (acc[r.reaction] || 0) + 1;
+      }
+      return acc;
+    }, {});
+  }
+  return {};
+}
+
+function hasReactions(message) {
+  const reactions = getReactions(message);
+  return Object.keys(reactions).length > 0;
 }
 
 function getTimestamp(message) {
@@ -281,6 +351,125 @@ function isRetryableMessage(message) {
   return !!(message && message.fromMe && (message.failed || message.queued));
 }
 
+function canActOnMessage(message) {
+  return !!getMessageIdentifier(message) && !message.pending && !message.queued;
+}
+
+function canEditMessage(message) {
+  return canActOnMessage(message) && !!message.fromMe && !!getMessageBody(message);
+}
+
+function canDownloadMedia(message) {
+  if (!canActOnMessage(message)) {
+    return false;
+  }
+
+  const payloadMeta = message && message.payloadMeta && typeof message.payloadMeta === 'object' ? message.payloadMeta : {};
+  const type = String(message.type || payloadMeta.type || '').toLowerCase();
+
+  return !!message.hasMedia || ['image', 'video', 'audio', 'voice', 'document', 'sticker'].includes(type);
+}
+
+function isPollMessage(message) {
+  const payloadMeta = message && message.payloadMeta && typeof message.payloadMeta === 'object' ? message.payloadMeta : {};
+  const type = String(message.type || payloadMeta.type || '').toLowerCase();
+
+  return type === 'poll' || !!message.pollName || !!payloadMeta.pollName;
+}
+
+function isStarred(message) {
+  return !!(message && (message.isStarred || message.starred));
+}
+
+function toggleMenu(messageId) {
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+
+  if (openMenuId.value === messageId) {
+    openMenuId.value = null;
+  } else {
+    openMenuId.value = messageId;
+  }
+}
+
+function toggleEmojiPicker(messageId) {
+  openMenuId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+
+  if (emojiPickerMessageId.value === messageId) {
+    emojiPickerMessageId.value = null;
+  } else {
+    emojiPickerMessageId.value = messageId;
+  }
+}
+
+function toggleExpandedEmojiPicker(messageId) {
+  expandedEmojiPickerMessageId.value = expandedEmojiPickerMessageId.value === messageId ? null : messageId;
+}
+
+function selectReaction(reaction, message) {
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+  emit('message-action', { action: 'react', message, reaction });
+}
+
+function startEdit(message) {
+  skipNextOutsideClick = true;
+  openMenuId.value = null;
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+  editingMessageId.value = getMessageIdentifier(message);
+  editText.value = getMessageBody(message);
+  nextTick(() => {
+    const el = Array.isArray(editInputRef.value) ? editInputRef.value[0] : editInputRef.value;
+
+    if (el) {
+      el.focus();
+      el.setSelectionRange(editText.value.length, editText.value.length);
+    }
+  });
+}
+
+function confirmEdit(message) {
+  const text = editText.value.trim();
+  editingMessageId.value = null;
+
+  if (!text || text === getMessageBody(message)) {
+    return;
+  }
+
+  emit('message-action', { action: 'edit', message, editedText: text });
+}
+
+function cancelEdit() {
+  editingMessageId.value = null;
+  editText.value = '';
+}
+
+function startDelete(message) {
+  skipNextOutsideClick = true;
+  openMenuId.value = null;
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+  deletingMessageId.value = getMessageIdentifier(message);
+}
+
+function confirmDelete(message, everyone) {
+  deletingMessageId.value = null;
+  emit('message-action', { action: 'delete', message, everyone });
+}
+
+function cancelDelete() {
+  deletingMessageId.value = null;
+}
+
+function emitMessageAction(action, message) {
+  openMenuId.value = null;
+  emojiPickerMessageId.value = null;
+  expandedEmojiPickerMessageId.value = null;
+  emit('message-action', { action, message });
+}
+
 function formatChatId(chatId) {
   if (isLidChatId(chatId)) {
     return '';
@@ -302,9 +491,6 @@ function isLidChatId(chatId) {
         <h2>{{ title }}</h2>
         <p v-if="subtitle">{{ subtitle }}</p>
       </div>
-      <button type="button" class="wa-icon-button" title="Refresh messages" aria-label="Refresh messages" @click="emit('refresh')">
-        <span class="fas fa-rotate-right"></span>
-      </button>
     </div>
 
     <div v-if="!activeChatId" class="wa-thread-empty">
@@ -339,13 +525,63 @@ function isLidChatId(chatId) {
               :class="{ 'is-outgoing': message.fromMe, 'is-target': isTargetMessage(message) }"
             >
               <div class="wa-message-bubble" :class="{ 'is-pending': message.pending, 'is-failed': message.failed }">
-                <p>{{ getMessageBody(message) }}</p>
-                <time>
-                  {{ formatTime(message) }}
+                <!-- Inline edit mode -->
+                <div v-if="editingMessageId === getMessageIdentifier(message)" class="wa-inline-edit">
+                  <textarea
+                    ref="editInputRef"
+                    v-model="editText"
+                    class="wa-inline-edit__input"
+                    rows="2"
+                    @keydown.enter.exact.prevent="confirmEdit(message)"
+                    @keydown.escape="cancelEdit"
+                  ></textarea>
+                  <div class="wa-inline-edit__actions">
+                    <button type="button" class="wa-inline-btn wa-inline-btn--save" @click="confirmEdit(message)">
+                      <span class="fas fa-check"></span>
+                    </button>
+                    <button type="button" class="wa-inline-btn wa-inline-btn--cancel" @click="cancelEdit">
+                      <span class="fas fa-xmark"></span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Normal message body -->
+                <p v-else>{{ getMessageBody(message) }}</p>
+
+                <!-- Delete confirmation -->
+                <Transition name="wa-menu-fade">
+                  <div v-if="deletingMessageId === getMessageIdentifier(message)" class="wa-delete-confirm" @click.stop>
+                    <span>Delete message?</span>
+                    <button type="button" class="wa-inline-btn wa-inline-btn--danger" @click="confirmDelete(message, false)">
+                      For me
+                    </button>
+                    <button v-if="message.fromMe" type="button" class="wa-inline-btn wa-inline-btn--danger" @click="confirmDelete(message, true)">
+                      For everyone
+                    </button>
+                    <button type="button" class="wa-inline-btn wa-inline-btn--cancel" @click="cancelDelete">
+                      Cancel
+                    </button>
+                  </div>
+                </Transition>
+
+                <div class="wa-message-meta">
+                  <span v-if="isStarred(message)" class="wa-message-star" title="Starred">
+                    <span class="fas fa-star"></span>
+                  </span>
+                  <time>{{ formatTime(message) }}</time>
                   <span v-if="getAckLabel(message)" class="wa-message-ack" :class="getAckClass(message)">
                     {{ getAckLabel(message) }}
                   </span>
-                </time>
+                </div>
+
+                <!-- Reactions display -->
+                <div v-if="hasReactions(message)" class="wa-message-reactions">
+                  <span v-for="(count, emoji) in getReactions(message)" :key="emoji" class="wa-reaction-badge">
+                    {{ emoji }} <small v-if="count > 1">{{ count }}</small>
+                  </span>
+                </div>
+
+                <!-- Retry for failed/queued -->
                 <button
                   v-if="isRetryableMessage(message)"
                   type="button"
@@ -357,6 +593,100 @@ function isLidChatId(chatId) {
                   <span class="fas fa-rotate-right"></span>
                   <span>Retry</span>
                 </button>
+
+                <!-- Chevron trigger for action menu -->
+                <button
+                  v-if="canActOnMessage(message)"
+                  type="button"
+                  class="wa-msg-chevron"
+                  :class="{ 'is-open': openMenuId === getMessageIdentifier(message) || emojiPickerMessageId === getMessageIdentifier(message) }"
+                  :title="openMenuId === getMessageIdentifier(message) ? 'Close menu' : 'Message options'"
+                  aria-label="Message options"
+                  @click.stop="toggleMenu(getMessageIdentifier(message))"
+                >
+                  <span class="fas fa-chevron-down"></span>
+                </button>
+
+                <!-- Dropdown action menu -->
+                <Transition name="wa-menu-fade">
+                  <div
+                    v-if="openMenuId === getMessageIdentifier(message)"
+                    class="wa-msg-menu"
+                    @click.stop
+                  >
+                    <button type="button" @click="toggleEmojiPicker(getMessageIdentifier(message))">
+                      <span class="far fa-face-smile"></span> React
+                    </button>
+                    <button v-if="canEditMessage(message)" type="button" @click="startEdit(message)">
+                      <span class="fas fa-pen"></span> Edit
+                    </button>
+                    <button type="button" @click="startDelete(message)">
+                      <span class="fas fa-trash"></span> Delete
+                    </button>
+                    <button type="button" @click="emitMessageAction('forward', message)">
+                      <span class="fas fa-share"></span> Forward
+                    </button>
+                    <button type="button" @click="emitMessageAction(isStarred(message) ? 'unstar' : 'star', message)">
+                      <span :class="isStarred(message) ? 'fas fa-star' : 'far fa-star'"></span>
+                      {{ isStarred(message) ? 'Unstar' : 'Star' }}
+                    </button>
+                    <button v-if="canDownloadMedia(message)" type="button" @click="emitMessageAction('download-media', message)">
+                      <span class="fas fa-download"></span> Download
+                    </button>
+                    <button v-if="isPollMessage(message)" type="button" @click="emitMessageAction('poll-vote', message)">
+                      <span class="fas fa-check-to-slot"></span> Vote
+                    </button>
+                  </div>
+                </Transition>
+
+                <!-- Emoji quick-reaction picker -->
+                <Transition name="wa-menu-fade">
+                  <div
+                    v-if="emojiPickerMessageId === getMessageIdentifier(message)"
+                    class="wa-emoji-picker"
+                    :class="{ 'is-expanded': expandedEmojiPickerMessageId === getMessageIdentifier(message) }"
+                    @click.stop
+                  >
+                    <div class="wa-emoji-picker__quick">
+                      <button
+                        v-for="emoji in QUICK_REACTIONS"
+                        :key="emoji"
+                        type="button"
+                        class="wa-emoji-btn"
+                        :title="emoji"
+                        @click="selectReaction(emoji, message)"
+                      >{{ emoji }}</button>
+                      <button
+                        type="button"
+                        class="wa-emoji-btn wa-emoji-btn--more"
+                        title="More reactions"
+                        aria-label="More reactions"
+                        @click="toggleExpandedEmojiPicker(getMessageIdentifier(message))"
+                      >
+                        <span class="far fa-face-smile"></span>
+                      </button>
+                      <button
+                        type="button"
+                        class="wa-emoji-btn wa-emoji-btn--remove"
+                        title="Remove reaction"
+                        aria-label="Remove reaction"
+                        @click="selectReaction('', message)"
+                      >
+                        <span class="fas fa-xmark"></span>
+                      </button>
+                    </div>
+                    <div v-if="expandedEmojiPickerMessageId === getMessageIdentifier(message)" class="wa-emoji-picker__grid">
+                      <button
+                        v-for="emoji in EMOJI_REACTION_CHOICES"
+                        :key="emoji"
+                        type="button"
+                        class="wa-emoji-btn"
+                        :title="emoji"
+                        @click="selectReaction(emoji, message)"
+                      >{{ emoji }}</button>
+                    </div>
+                  </div>
+                </Transition>
               </div>
             </div>
           </TransitionGroup>

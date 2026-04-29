@@ -68,3 +68,35 @@ assertContains(
     'WAWebContactProfilePicThumbBridge',
     'whatsapp-web.js getProfilePicUrl profile picture fix'
 );
+
+patchFile(
+    '/usr/src/app/src/controllers/messageController.js',
+    [
+        {
+            oldText: [
+                'const _getMessageById = async (client, messageId, chatId) => {',
+                '  const chat = await client.getChatById(chatId)',
+                '  const messages = await chat.fetchMessages({ messageId: messageId, limit: 1 })',
+                '  return messages[0]',
+                '}',
+            ].join('\n'),
+            newText: [
+                'const _getMessageById = async (client, messageId, chatId) => {',
+                '  // Primary: client.getMessageById works with @lid IDs (patched)',
+                '  try {',
+                '    const msg = await client.getMessageById(messageId)',
+                '    if (msg) return msg',
+                '  } catch (_e) { /* fallback below */ }',
+                '  // Fallback: chat.fetchMessages for legacy lookups',
+                '  try {',
+                '    const chat = await client.getChatById(chatId)',
+                '    const messages = await chat.fetchMessages({ messageId: messageId, limit: 1 })',
+                '    if (messages && messages[0]) return messages[0]',
+                '  } catch (_e2) { /* not found */ }',
+                '  return undefined',
+                '}',
+            ].join('\n'),
+        },
+    ],
+    'wwebjs-api _getMessageById @lid support'
+);

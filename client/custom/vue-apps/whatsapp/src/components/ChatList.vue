@@ -21,10 +21,11 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['open-chat', 'refresh']);
+const emit = defineEmits(['open-chat']);
 
 const search = ref('');
 const debouncedSearch = ref('');
+const activeFilter = ref('all');
 const visibleLimit = ref(CHAT_RENDER_CHUNK);
 let debounceTimer = null;
 
@@ -38,11 +39,16 @@ watch(search, value => {
 
 const filteredChats = computed(() => {
   const query = debouncedSearch.value;
+  const filter = activeFilter.value;
 
   return props.chats
     .slice()
     .sort((a, b) => getTimestamp(b) - getTimestamp(a))
     .filter(chat => {
+      if (filter === 'groups' && !isGroupChat(chat)) {
+        return false;
+      }
+
       if (!query) {
         return true;
       }
@@ -63,6 +69,7 @@ const filteredChats = computed(() => {
     });
 });
 
+const groupCount = computed(() => props.chats.filter(chat => isGroupChat(chat)).length);
 const visibleChats = computed(() => filteredChats.value.slice(0, visibleLimit.value));
 
 function handleScrollerUpdate(startIndex, endIndex) {
@@ -245,6 +252,14 @@ function isPhoneBasedChatId(chatId) {
   return value.endsWith('@c.us') || value.endsWith('@s.whatsapp.net');
 }
 
+function isGroupChat(chat) {
+  if (!chat || typeof chat !== 'object') {
+    return String(chat || '').toLowerCase().trim().endsWith('@g.us');
+  }
+
+  return !!chat.isGroup || getChatId(chat).toLowerCase().trim().endsWith('@g.us');
+}
+
 function isLidChatId(chatId) {
   return String(chatId || '').toLowerCase().trim().endsWith('@lid');
 }
@@ -288,9 +303,34 @@ function shouldSkipPhoneLikeLabel(label, chatId) {
         <p class="wa-vue-kicker">Chats</p>
         <h2>Inbox</h2>
       </div>
-      <button type="button" class="wa-icon-button" title="Refresh chats" aria-label="Refresh chats" @click="emit('refresh')">
-        <span class="fas fa-rotate-right"></span>
-      </button>
+      <div class="wa-chat-filter" role="tablist" aria-label="Chat filter">
+        <button
+          type="button"
+          class="wa-filter-button"
+          :class="{ 'is-active': activeFilter === 'all' }"
+          title="All chats"
+          aria-label="Show all chats"
+          :aria-selected="activeFilter === 'all'"
+          @click="activeFilter = 'all'"
+        >
+          <span class="fas fa-inbox"></span>
+          <span>All</span>
+          <b>{{ props.chats.length }}</b>
+        </button>
+        <button
+          type="button"
+          class="wa-filter-button"
+          :class="{ 'is-active': activeFilter === 'groups' }"
+          title="Groups"
+          aria-label="Show groups"
+          :aria-selected="activeFilter === 'groups'"
+          @click="activeFilter = 'groups'"
+        >
+          <span class="fas fa-users"></span>
+          <span>Groups</span>
+          <b>{{ groupCount }}</b>
+        </button>
+      </div>
     </header>
 
     <label class="wa-chat-search">

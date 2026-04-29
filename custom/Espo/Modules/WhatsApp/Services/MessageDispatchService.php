@@ -127,6 +127,10 @@ class MessageDispatchService
 
     public function processWebhookData(object $data): ?array
     {
+        if (($data->dataType ?? null) === 'message_reaction') {
+            return $this->processReactionWebhookData($data);
+        }
+
         $payload = null;
 
         if (isset($data->data) && isset($data->data->body)) {
@@ -212,6 +216,49 @@ class MessageDispatchService
         $this->broadcastMessage($chatId, $message);
 
         return $message;
+    }
+
+    private function processReactionWebhookData(object $data): ?array
+    {
+        $reaction = $data->data->reaction ?? null;
+
+        if (!is_array($reaction) && !is_object($reaction)) {
+            return null;
+        }
+
+        $messageId = $this->extractMessageId($this->readMessageValue($reaction, 'msgId'));
+
+        if (!$messageId) {
+            return null;
+        }
+
+        $message = $this->entityManager
+            ->getRepository('WhatsAppMessage')
+            ->where(['messageId' => $messageId])
+            ->findOne();
+
+        if (!$message) {
+            $this->log->debug('WhatsApp reaction webhook skipped: message not found', [
+                'messageId' => $messageId,
+            ]);
+
+            return null;
+        }
+
+        $payloadMeta = $this->normalizePayloadMeta($message->get('payloadMeta') ?: []);
+        $payloadMeta['reactions'] = $this->mergeReactionPayload(
+            $payloadMeta['reactions'] ?? [],
+            $reaction
+        );
+        $payloadMeta['lastReactionAt'] = time();
+
+        $message->set('payloadMeta', (object) $payloadMeta);
+        $this->entityManager->saveEntity($message);
+
+        $payload = $this->normalizeEntityForBroadcast($message);
+        $this->broadcastMessage($payload['chatId'], $payload);
+
+        return $payload;
     }
 
     public function storeMessage(array $data): Entity
@@ -600,6 +647,76 @@ class MessageDispatchService
         }
 
         return [];
+    }
+
+    private function mergeReactionPayload(array|object $existingReactions, array|object $reaction): array
+    {
+        $reactions = [];
+
+        foreach ($this->normalizeReactionList($existingReactions) as $existingReaction) {
+            $key = $this->buildReactionKey($existingReaction);
+
+            if ($key) {
+                $reactions[$key] = $existingReaction;
+            }
+        }
+
+        $reactionValue = trim((string) $this->readMessageValue($reaction, 'reaction', ''));
+        $senderId = $this->extractMessageId($this->readMessageValue($reaction, 'senderId'));
+        $reactionId = $this->extractMessageId($this->readMessageValue($reaction, 'id'));
+        $key = $senderId ?: ($reactionId ?: uniqid('reaction_', true));
+
+        if ($reactionValue === '') {
+            unset($reactions[$key]);
+
+            return array_values($reactions);
+        }
+
+        $reactions[$key] = [
+            'id' => $reactionId,
+            'senderId' => $senderId,
+            'reaction' => $reactionValue,
+            'timestamp' => $this->normalizeTimestampValue($this->readMessageValue($reaction, 'timestamp', time())),
+            'fromMe' => (bool) $this->readMessageValue($reaction, 'fromMe', false),
+        ];
+
+        return array_values($reactions);
+    }
+
+    private function normalizeReactionList(array|object $reactions): array
+    {
+        if (is_object($reactions)) {
+            $reactions = get_object_vars($reactions);
+        }
+
+        $normalized = [];
+
+        foreach ($reactions as $reaction) {
+            if (!is_array($reaction) && !is_object($reaction)) {
+                continue;
+            }
+
+            $reactionValue = trim((string) $this->readMessageValue($reaction, 'reaction', ''));
+
+            if ($reactionValue === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'id' => $this->extractMessageId($this->readMessageValue($reaction, 'id')),
+                'senderId' => $this->extractMessageId($this->readMessageValue($reaction, 'senderId')),
+                'reaction' => $reactionValue,
+                'timestamp' => $this->normalizeTimestampValue($this->readMessageValue($reaction, 'timestamp', time())),
+                'fromMe' => (bool) $this->readMessageValue($reaction, 'fromMe', false),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    private function buildReactionKey(array $reaction): string
+    {
+        return (string) ($reaction['senderId'] ?: ($reaction['id'] ?: ''));
     }
 
     private function extractComparableSortSequence(array $message): ?int
