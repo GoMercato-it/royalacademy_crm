@@ -365,7 +365,7 @@ function shouldSkipPhoneLikeLabel(label, chatId) {
             :aria-current="getChatId(item) === activeChatId ? 'true' : undefined"
             @click="emit('open-chat', item)"
           >
-            <ChatAvatar :chat-id="getChatId(item)" :name="getChatName(item)" />
+            <ChatAvatar :key="item._waKey" :chat-id="getChatId(item)" :name="getChatName(item)" />
             <span class="wa-chat-main">
               <span class="wa-chat-title-row">
                 <strong>{{ getChatName(item) }}</strong>

@@ -377,16 +377,50 @@ class MessageDispatchService
 
     public function getStoredMessages(string $chatId, int $limit = 50): array
     {
-        $collection = $this->entityManager
-            ->getRepository('WhatsAppMessage')
-            ->where(['chatId' => $chatId])
+        return $this->getStoredMessagesPage($chatId, $limit)['list'];
+    }
+
+    /**
+     * @return array{
+     *     list: array<int, array<string, mixed>>,
+     *     total: int,
+     *     limit: int,
+     *     offset: int,
+     *     hasMore: bool,
+     *     nextOffset: ?int,
+     *     nextCursor: ?int
+     * }
+     */
+    public function getStoredMessagesPage(
+        string $chatId,
+        int $limit = 50,
+        int $offset = 0,
+        ?int $before = null
+    ): array {
+        $limit = max(1, min(1000, $limit));
+        $offset = max(0, $offset);
+        $where = ['chatId' => $chatId];
+
+        if ($before !== null && $before > 0) {
+            $where['timestamp<'] = date('Y-m-d H:i:s', $before);
+            $offset = 0;
+        }
+
+        $repository = $this->entityManager->getRepository('WhatsAppMessage');
+        $total = $repository->where($where)->count();
+        $collection = $repository
+            ->where($where)
             ->order('timestamp', 'DESC')
-            ->limit($limit)
+            ->limit($offset, $limit + 1)
             ->find();
 
         $result = [];
 
         foreach ($collection as $message) {
+            if (count($result) >= $limit) {
+                break;
+            }
+
             $body = trim((string) ($message->get('body') ?? ''));
             $bodyPreview = trim((string) ($message->get('bodyPreview') ?? ''));
 
@@ -399,7 +433,24 @@ class MessageDispatchService
 
         usort($result, [$this, 'compareBroadcastMessages']);
 
-        return $result;
+        $nextOffset = $offset + $limit;
+        $hasMore = $nextOffset < $total;
+        $nextCursor = null;
+
+        if ($hasMore && $result !== []) {
+            $oldest = $result[0]['timestamp'] ?? null;
+            $nextCursor = is_numeric($oldest) ? (int) $oldest : null;
+        }
+
+        return [
+            'list' => $result,
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+            'hasMore' => $hasMore,
+            'nextOffset' => $hasMore ? $nextOffset : null,
+            'nextCursor' => $nextCursor,
+        ];
     }
 
     private function findStoredMessage(?string $messageId, string $chatId, bool $fromMe, string $body, int $timestamp): ?Entity

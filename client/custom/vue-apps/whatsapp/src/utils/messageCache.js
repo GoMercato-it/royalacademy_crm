@@ -2,6 +2,7 @@ const DB_NAME = 'wa-vue-cache';
 const DB_VERSION = 1;
 const MESSAGE_STORE = 'messagesByChat';
 const MAX_MESSAGES_PER_CHAT = 1000;
+export const MESSAGE_CACHE_FRESH_MS = 30 * 1000;
 
 let databasePromise = null;
 
@@ -45,16 +46,31 @@ function runTransaction(mode, callback) {
 }
 
 export async function readCachedMessages(chatId) {
+  const entry = await readCachedMessagesEntry(chatId);
+
+  return entry ? entry.messages : [];
+}
+
+export async function readCachedMessagesEntry(chatId, { maxAgeMs = null, allowStale = true } = {}) {
   if (!chatId) {
-    return [];
+    return null;
   }
 
   try {
     const record = await runTransaction('readonly', store => store.get(chatId));
+    const entry = normalizeCacheRecord(record, maxAgeMs ?? MESSAGE_CACHE_FRESH_MS);
 
-    return record && Array.isArray(record.messages) ? record.messages : [];
+    if (!entry) {
+      return null;
+    }
+
+    if (!allowStale && !entry.fresh) {
+      return null;
+    }
+
+    return entry;
   } catch (error) {
-    return [];
+    return null;
   }
 }
 
@@ -73,6 +89,8 @@ export async function writeCachedMessages(chatId, messages) {
       chatId,
       messages: normalized,
       savedAt: Date.now(),
+      version: Date.now(),
+      fresh: true,
     }));
   } catch (error) {}
 }
@@ -123,4 +141,23 @@ function getTimestamp(message) {
   const parsed = Date.parse(String(raw));
 
   return Number.isFinite(parsed) ? parsed / 1000 : 0;
+}
+
+function normalizeCacheRecord(record, maxAgeMs) {
+  if (!record || !Array.isArray(record.messages)) {
+    return null;
+  }
+
+  const version = Number(record.version || record.savedAt || 0);
+  const savedAt = Number(record.savedAt || version || 0);
+  const age = savedAt > 0 ? Date.now() - savedAt : Number.POSITIVE_INFINITY;
+
+  return {
+    chatId: record.chatId,
+    messages: record.messages,
+    savedAt,
+    version,
+    age,
+    fresh: age <= maxAgeMs,
+  };
 }

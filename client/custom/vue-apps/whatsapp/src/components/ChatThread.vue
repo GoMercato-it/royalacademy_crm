@@ -1,5 +1,6 @@
 <script setup>
 import { computed, nextTick, ref, watch, onMounted, onBeforeUnmount } from 'vue';
+import { useEspoTheme } from '../composables/useEspoTheme';
 
 const props = defineProps({
   activeChatId: {
@@ -33,7 +34,11 @@ const editingMessageId = ref(null);
 const editText = ref('');
 const deletingMessageId = ref(null);
 const editInputRef = ref(null);
+const menuRef = ref(null);
+const menuPosition = ref(null);
+const { themeStyle } = useEspoTheme();
 let lastLoadMoreAt = 0;
+let menuAnchorElement = null;
 
 const QUICK_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const EMOJI_REACTION_CHOICES = [
@@ -55,31 +60,68 @@ const orderedMessages = computed(() => props.messages
 const groupedMessages = computed(() => {
   const groups = [];
   let current = null;
+  const chatRenderKey = getActiveChatRenderKey();
 
-  orderedMessages.value.forEach(message => {
+  orderedMessages.value.forEach((message, index) => {
     const dateKey = formatDateKey(message);
 
-    if (!current || current.key !== dateKey) {
+    if (!current || current.dateKey !== dateKey) {
       current = {
-        key: dateKey,
+        dateKey,
+        key: `${chatRenderKey}:${dateKey}`,
         label: formatDateLabel(message),
         messages: [],
       };
       groups.push(current);
     }
 
-    current.messages.push(message);
+    current.messages.push(createMessageView(message, chatRenderKey, index));
   });
 
   return groups;
 });
 
+const openMenuItem = computed(() => {
+  if (!openMenuId.value) {
+    return null;
+  }
+
+  for (const group of groupedMessages.value) {
+    const item = group.messages.find(item => item.id === openMenuId.value);
+
+    if (item) {
+      return item;
+    }
+  }
+
+  return null;
+});
+
+const menuPortalStyle = computed(() => {
+  if (!menuPosition.value) {
+    return null;
+  }
+
+  return {
+    ...themeStyle.value,
+    ...menuPosition.value,
+  };
+});
+
 watch(() => props.activeChatId, () => {
   openMenuId.value = null;
+  menuPosition.value = null;
+  menuAnchorElement = null;
   emojiPickerMessageId.value = null;
   expandedEmojiPickerMessageId.value = null;
   editingMessageId.value = null;
   deletingMessageId.value = null;
+  lastLoadMoreAt = Date.now();
+
+  if (listRef.value) {
+    listRef.value.scrollTop = 0;
+  }
+
   scrollToBottom();
 });
 
@@ -114,6 +156,8 @@ function handleClickOutside(event) {
   }
 
   openMenuId.value = null;
+  menuPosition.value = null;
+  menuAnchorElement = null;
   emojiPickerMessageId.value = null;
   expandedEmojiPickerMessageId.value = null;
   editingMessageId.value = null;
@@ -122,15 +166,21 @@ function handleClickOutside(event) {
 
 onMounted(() => {
   document.addEventListener('click', handleClickOutside);
+  window.addEventListener('resize', closeMessageMenu);
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener('click', handleClickOutside);
+  window.removeEventListener('resize', closeMessageMenu);
 });
 
 function handleScroll() {
   const element = listRef.value;
   const now = Date.now();
+
+  if (openMenuId.value) {
+    updateMessageMenuPosition();
+  }
 
   if (!element || props.loading || !props.activeChatId) {
     return;
@@ -189,6 +239,85 @@ function getMessageIdentifier(message) {
   }
 
   return String(message.messageId || message.id || '');
+}
+
+function getActiveChatRenderKey() {
+  return String(props.activeChatId || 'no-chat');
+}
+
+function getMessageDomKey(message, chatRenderKey, index) {
+  const messageId = message.messageId || message.id;
+
+  if (messageId) {
+    return `${chatRenderKey}:${messageId}`;
+  }
+
+  const fallback = [
+    getTimestamp(message),
+    message.sortSequence || '',
+    message.bodyPreview || message.body || message.caption || message.type || '',
+    index,
+  ].join(':');
+
+  return `${chatRenderKey}:${fallback}`;
+}
+
+function createMessageView(message, chatRenderKey = getActiveChatRenderKey(), index = 0) {
+  const id = getMessageIdentifier(message);
+  const body = getMessageBody(message);
+  const reactions = getReactions(message);
+  const reactionKey = Object.keys(reactions)
+    .sort()
+    .map(emoji => `${emoji}:${reactions[emoji]}`)
+    .join(',');
+  const ackLabel = getAckLabel(message);
+  const ackClass = getAckClass(message);
+  const retryable = isRetryableMessage(message);
+  const canAct = canActOnMessage(message);
+  const canEdit = canAct && !!message.fromMe && !!body;
+  const canDownload = canDownloadMedia(message);
+  const poll = isPollMessage(message);
+  const starred = isStarred(message);
+  const target = id !== '' && id === props.targetMessageId;
+  const time = formatTime(message);
+
+  return {
+    message,
+    id,
+    key: getMessageDomKey(message, chatRenderKey, index),
+    body,
+    reactions,
+    hasReactions: reactionKey !== '',
+    time,
+    ackLabel,
+    ackClass,
+    retryable,
+    canAct,
+    canEdit,
+    canDownload,
+    poll,
+    starred,
+    target,
+    renderKey: [
+      chatRenderKey,
+      id,
+      body,
+      reactionKey,
+      time,
+      ackLabel,
+      ackClass,
+      retryable ? 'r' : '',
+      canAct ? 'a' : '',
+      canEdit ? 'e' : '',
+      canDownload ? 'd' : '',
+      poll ? 'p' : '',
+      starred ? 's' : '',
+      target ? 't' : '',
+      message.pending ? 'pending' : '',
+      message.failed ? 'failed' : '',
+      message.queued ? 'queued' : '',
+    ].join('|'),
+  };
 }
 
 function isTargetMessage(message) {
@@ -381,19 +510,61 @@ function isStarred(message) {
   return !!(message && (message.isStarred || message.starred));
 }
 
-function toggleMenu(messageId) {
+function toggleMenu(messageId, event) {
   emojiPickerMessageId.value = null;
   expandedEmojiPickerMessageId.value = null;
 
   if (openMenuId.value === messageId) {
-    openMenuId.value = null;
+    closeMessageMenu();
   } else {
+    menuAnchorElement = event && event.currentTarget ? event.currentTarget : null;
     openMenuId.value = messageId;
+    updateMessageMenuPosition();
+
+    nextTick(() => updateMessageMenuPosition());
   }
 }
 
-function toggleEmojiPicker(messageId) {
+function closeMessageMenu() {
   openMenuId.value = null;
+  menuPosition.value = null;
+  menuAnchorElement = null;
+}
+
+function updateMessageMenuPosition() {
+  const anchor = menuAnchorElement;
+
+  if (!anchor || !document.body.contains(anchor)) {
+    menuPosition.value = null;
+    return;
+  }
+
+  const rect = anchor.getBoundingClientRect();
+  const menu = menuRef.value;
+  const width = menu ? menu.offsetWidth : 176;
+  const height = menu ? menu.offsetHeight : 244;
+  const margin = 8;
+  const gap = 8;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const hasRoomBelow = rect.bottom + gap + height + margin <= viewportHeight;
+  const top = hasRoomBelow
+    ? rect.bottom + gap
+    : Math.max(margin, rect.top - height - gap);
+  const left = Math.min(
+    Math.max(margin, rect.right - width + 8),
+    viewportWidth - width - margin
+  );
+
+  menuPosition.value = {
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+    transformOrigin: hasRoomBelow ? 'top right' : 'bottom right',
+  };
+}
+
+function toggleEmojiPicker(messageId) {
+  closeMessageMenu();
   expandedEmojiPickerMessageId.value = null;
 
   if (emojiPickerMessageId.value === messageId) {
@@ -415,7 +586,7 @@ function selectReaction(reaction, message) {
 
 function startEdit(message) {
   skipNextOutsideClick = true;
-  openMenuId.value = null;
+  closeMessageMenu();
   emojiPickerMessageId.value = null;
   expandedEmojiPickerMessageId.value = null;
   editingMessageId.value = getMessageIdentifier(message);
@@ -448,7 +619,7 @@ function cancelEdit() {
 
 function startDelete(message) {
   skipNextOutsideClick = true;
-  openMenuId.value = null;
+  closeMessageMenu();
   emojiPickerMessageId.value = null;
   expandedEmojiPickerMessageId.value = null;
   deletingMessageId.value = getMessageIdentifier(message);
@@ -464,7 +635,7 @@ function cancelDelete() {
 }
 
 function emitMessageAction(action, message) {
-  openMenuId.value = null;
+  closeMessageMenu();
   emojiPickerMessageId.value = null;
   expandedEmojiPickerMessageId.value = null;
   emit('message-action', { action, message });
@@ -498,9 +669,18 @@ function isLidChatId(chatId) {
       <h2>Select a chat</h2>
     </div>
 
-    <div v-else ref="listRef" class="wa-message-list" @scroll.passive="handleScroll">
-      <div v-if="loading && !orderedMessages.length" class="wa-thread-loading">
-        <div v-for="item in 8" :key="item" class="wa-message-skeleton"></div>
+    <div
+      v-else
+      ref="listRef"
+      class="wa-message-list"
+      :class="{ 'is-loading': loading }"
+      @scroll.passive="handleScroll"
+    >
+      <div v-if="loading && !orderedMessages.length" class="wa-thread-loading is-center">
+        <div class="wa-loading-pill">
+          <span class="fas fa-circle-notch fa-spin"></span>
+          <span>Loading messages...</span>
+        </div>
       </div>
 
       <div v-else-if="!orderedMessages.length" class="wa-thread-empty is-compact">
@@ -508,7 +688,7 @@ function isLidChatId(chatId) {
         <p>No stored messages yet.</p>
       </div>
 
-      <template v-else>
+      <div v-else class="wa-message-groups">
         <div v-if="loading" class="wa-thread-loading is-inline">
           <div class="wa-message-skeleton"></div>
         </div>
@@ -516,27 +696,28 @@ function isLidChatId(chatId) {
         <section v-for="group in groupedMessages" :key="group.key" class="wa-message-date-group">
           <div class="wa-message-date-chip">{{ group.label }}</div>
 
-          <TransitionGroup name="wa-message" tag="div" class="wa-message-date-group__messages">
+          <div class="wa-message-date-group__messages">
             <div
-              v-for="message in group.messages"
-              :key="message.messageId || message.id || `${message.timestamp}-${message.bodyPreview}`"
-              :data-message-id="getMessageIdentifier(message)"
+              v-for="item in group.messages"
+              :key="item.key"
+              v-memo="[activeChatId, item.renderKey, openMenuId === item.id, emojiPickerMessageId === item.id, expandedEmojiPickerMessageId === item.id, editingMessageId === item.id, deletingMessageId === item.id]"
+              :data-message-id="item.id"
               class="wa-message-row"
-              :class="{ 'is-outgoing': message.fromMe, 'is-target': isTargetMessage(message) }"
+              :class="{ 'is-outgoing': item.message.fromMe, 'is-target': item.target }"
             >
-              <div class="wa-message-bubble" :class="{ 'is-pending': message.pending, 'is-failed': message.failed }">
+              <div class="wa-message-bubble" :class="{ 'is-pending': item.message.pending, 'is-failed': item.message.failed }">
                 <!-- Inline edit mode -->
-                <div v-if="editingMessageId === getMessageIdentifier(message)" class="wa-inline-edit">
+                <div v-if="editingMessageId === item.id" class="wa-inline-edit">
                   <textarea
                     ref="editInputRef"
                     v-model="editText"
                     class="wa-inline-edit__input"
                     rows="2"
-                    @keydown.enter.exact.prevent="confirmEdit(message)"
+                    @keydown.enter.exact.prevent="confirmEdit(item.message)"
                     @keydown.escape="cancelEdit"
                   ></textarea>
                   <div class="wa-inline-edit__actions">
-                    <button type="button" class="wa-inline-btn wa-inline-btn--save" @click="confirmEdit(message)">
+                    <button type="button" class="wa-inline-btn wa-inline-btn--save" @click="confirmEdit(item.message)">
                       <span class="fas fa-check"></span>
                     </button>
                     <button type="button" class="wa-inline-btn wa-inline-btn--cancel" @click="cancelEdit">
@@ -546,16 +727,16 @@ function isLidChatId(chatId) {
                 </div>
 
                 <!-- Normal message body -->
-                <p v-else>{{ getMessageBody(message) }}</p>
+                <p v-else>{{ item.body }}</p>
 
                 <!-- Delete confirmation -->
                 <Transition name="wa-menu-fade">
-                  <div v-if="deletingMessageId === getMessageIdentifier(message)" class="wa-delete-confirm" @click.stop>
+                  <div v-if="deletingMessageId === item.id" class="wa-delete-confirm" @click.stop>
                     <span>Delete message?</span>
-                    <button type="button" class="wa-inline-btn wa-inline-btn--danger" @click="confirmDelete(message, false)">
+                    <button type="button" class="wa-inline-btn wa-inline-btn--danger" @click="confirmDelete(item.message, false)">
                       For me
                     </button>
-                    <button v-if="message.fromMe" type="button" class="wa-inline-btn wa-inline-btn--danger" @click="confirmDelete(message, true)">
+                    <button v-if="item.message.fromMe" type="button" class="wa-inline-btn wa-inline-btn--danger" @click="confirmDelete(item.message, true)">
                       For everyone
                     </button>
                     <button type="button" class="wa-inline-btn wa-inline-btn--cancel" @click="cancelDelete">
@@ -565,30 +746,30 @@ function isLidChatId(chatId) {
                 </Transition>
 
                 <div class="wa-message-meta">
-                  <span v-if="isStarred(message)" class="wa-message-star" title="Starred">
+                  <span v-if="item.starred" class="wa-message-star" title="Starred">
                     <span class="fas fa-star"></span>
                   </span>
-                  <time>{{ formatTime(message) }}</time>
-                  <span v-if="getAckLabel(message)" class="wa-message-ack" :class="getAckClass(message)">
-                    {{ getAckLabel(message) }}
+                  <time>{{ item.time }}</time>
+                  <span v-if="item.ackLabel" class="wa-message-ack" :class="item.ackClass">
+                    {{ item.ackLabel }}
                   </span>
                 </div>
 
                 <!-- Reactions display -->
-                <div v-if="hasReactions(message)" class="wa-message-reactions">
-                  <span v-for="(count, emoji) in getReactions(message)" :key="emoji" class="wa-reaction-badge">
+                <div v-if="item.hasReactions" class="wa-message-reactions">
+                  <span v-for="(count, emoji) in item.reactions" :key="emoji" class="wa-reaction-badge">
                     {{ emoji }} <small v-if="count > 1">{{ count }}</small>
                   </span>
                 </div>
 
                 <!-- Retry for failed/queued -->
                 <button
-                  v-if="isRetryableMessage(message)"
+                  v-if="item.retryable"
                   type="button"
                   class="wa-message-retry"
                   title="Retry send"
                   aria-label="Retry send"
-                  @click="emit('retry-message', message)"
+                  @click="emit('retry-message', item.message)"
                 >
                   <span class="fas fa-rotate-right"></span>
                   <span>Retry</span>
@@ -596,55 +777,23 @@ function isLidChatId(chatId) {
 
                 <!-- Chevron trigger for action menu -->
                 <button
-                  v-if="canActOnMessage(message)"
+                  v-if="item.canAct"
                   type="button"
                   class="wa-msg-chevron"
-                  :class="{ 'is-open': openMenuId === getMessageIdentifier(message) || emojiPickerMessageId === getMessageIdentifier(message) }"
-                  :title="openMenuId === getMessageIdentifier(message) ? 'Close menu' : 'Message options'"
+                  :class="{ 'is-open': openMenuId === item.id || emojiPickerMessageId === item.id }"
+                  :title="openMenuId === item.id ? 'Close menu' : 'Message options'"
                   aria-label="Message options"
-                  @click.stop="toggleMenu(getMessageIdentifier(message))"
+                  @click.stop="toggleMenu(item.id, $event)"
                 >
                   <span class="fas fa-chevron-down"></span>
                 </button>
 
-                <!-- Dropdown action menu -->
-                <Transition name="wa-menu-fade">
-                  <div
-                    v-if="openMenuId === getMessageIdentifier(message)"
-                    class="wa-msg-menu"
-                    @click.stop
-                  >
-                    <button type="button" @click="toggleEmojiPicker(getMessageIdentifier(message))">
-                      <span class="far fa-face-smile"></span> React
-                    </button>
-                    <button v-if="canEditMessage(message)" type="button" @click="startEdit(message)">
-                      <span class="fas fa-pen"></span> Edit
-                    </button>
-                    <button type="button" @click="startDelete(message)">
-                      <span class="fas fa-trash"></span> Delete
-                    </button>
-                    <button type="button" @click="emitMessageAction('forward', message)">
-                      <span class="fas fa-share"></span> Forward
-                    </button>
-                    <button type="button" @click="emitMessageAction(isStarred(message) ? 'unstar' : 'star', message)">
-                      <span :class="isStarred(message) ? 'fas fa-star' : 'far fa-star'"></span>
-                      {{ isStarred(message) ? 'Unstar' : 'Star' }}
-                    </button>
-                    <button v-if="canDownloadMedia(message)" type="button" @click="emitMessageAction('download-media', message)">
-                      <span class="fas fa-download"></span> Download
-                    </button>
-                    <button v-if="isPollMessage(message)" type="button" @click="emitMessageAction('poll-vote', message)">
-                      <span class="fas fa-check-to-slot"></span> Vote
-                    </button>
-                  </div>
-                </Transition>
-
                 <!-- Emoji quick-reaction picker -->
                 <Transition name="wa-menu-fade">
                   <div
-                    v-if="emojiPickerMessageId === getMessageIdentifier(message)"
+                    v-if="emojiPickerMessageId === item.id"
                     class="wa-emoji-picker"
-                    :class="{ 'is-expanded': expandedEmojiPickerMessageId === getMessageIdentifier(message) }"
+                    :class="{ 'is-expanded': expandedEmojiPickerMessageId === item.id }"
                     @click.stop
                   >
                     <div class="wa-emoji-picker__quick">
@@ -654,14 +803,14 @@ function isLidChatId(chatId) {
                         type="button"
                         class="wa-emoji-btn"
                         :title="emoji"
-                        @click="selectReaction(emoji, message)"
+                        @click="selectReaction(emoji, item.message)"
                       >{{ emoji }}</button>
                       <button
                         type="button"
                         class="wa-emoji-btn wa-emoji-btn--more"
                         title="More reactions"
                         aria-label="More reactions"
-                        @click="toggleExpandedEmojiPicker(getMessageIdentifier(message))"
+                        @click="toggleExpandedEmojiPicker(item.id)"
                       >
                         <span class="far fa-face-smile"></span>
                       </button>
@@ -670,28 +819,63 @@ function isLidChatId(chatId) {
                         class="wa-emoji-btn wa-emoji-btn--remove"
                         title="Remove reaction"
                         aria-label="Remove reaction"
-                        @click="selectReaction('', message)"
+                        @click="selectReaction('', item.message)"
                       >
                         <span class="fas fa-xmark"></span>
                       </button>
                     </div>
-                    <div v-if="expandedEmojiPickerMessageId === getMessageIdentifier(message)" class="wa-emoji-picker__grid">
+                    <div v-if="expandedEmojiPickerMessageId === item.id" class="wa-emoji-picker__grid">
                       <button
                         v-for="emoji in EMOJI_REACTION_CHOICES"
                         :key="emoji"
                         type="button"
                         class="wa-emoji-btn"
                         :title="emoji"
-                        @click="selectReaction(emoji, message)"
+                        @click="selectReaction(emoji, item.message)"
                       >{{ emoji }}</button>
                     </div>
                   </div>
                 </Transition>
               </div>
             </div>
-          </TransitionGroup>
+          </div>
         </section>
-      </template>
+      </div>
     </div>
+
+    <Teleport to="body">
+      <Transition name="wa-menu-fade">
+        <div
+          v-if="openMenuItem && menuPortalStyle"
+          ref="menuRef"
+          class="wa-msg-menu wa-msg-menu--portal"
+          :style="menuPortalStyle"
+          @click.stop
+        >
+          <button type="button" @click="toggleEmojiPicker(openMenuItem.id)">
+            <span class="far fa-face-smile"></span> React
+          </button>
+          <button v-if="openMenuItem.canEdit" type="button" @click="startEdit(openMenuItem.message)">
+            <span class="fas fa-pen"></span> Edit
+          </button>
+          <button type="button" @click="startDelete(openMenuItem.message)">
+            <span class="fas fa-trash"></span> Delete
+          </button>
+          <button type="button" @click="emitMessageAction('forward', openMenuItem.message)">
+            <span class="fas fa-share"></span> Forward
+          </button>
+          <button type="button" @click="emitMessageAction(openMenuItem.starred ? 'unstar' : 'star', openMenuItem.message)">
+            <span :class="openMenuItem.starred ? 'fas fa-star' : 'far fa-star'"></span>
+            {{ openMenuItem.starred ? 'Unstar' : 'Star' }}
+          </button>
+          <button v-if="openMenuItem.canDownload" type="button" @click="emitMessageAction('download-media', openMenuItem.message)">
+            <span class="fas fa-download"></span> Download
+          </button>
+          <button v-if="openMenuItem.poll" type="button" @click="emitMessageAction('poll-vote', openMenuItem.message)">
+            <span class="fas fa-check-to-slot"></span> Vote
+          </button>
+        </div>
+      </Transition>
+    </Teleport>
   </section>
 </template>

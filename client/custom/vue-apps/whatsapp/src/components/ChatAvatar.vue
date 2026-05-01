@@ -83,6 +83,7 @@ function disconnectObserver() {
   <span ref="rootRef" class="wa-chat-avatar">
     <img
       v-if="avatarUrl && !imageFailed"
+      :key="`${chatId}:${avatarUrl}`"
       :src="avatarUrl"
       :alt="name || chatId"
       loading="lazy"

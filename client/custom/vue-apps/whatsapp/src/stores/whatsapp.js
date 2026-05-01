@@ -1,7 +1,12 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { createEspoApiClient } from '../utils/api';
-import { mergeCachedMessage, readCachedMessages, writeCachedMessages } from '../utils/messageCache';
+import {
+  MESSAGE_CACHE_FRESH_MS,
+  mergeCachedMessage,
+  readCachedMessagesEntry,
+  writeCachedMessages,
+} from '../utils/messageCache';
 
 const CHAT_READ_STATE_KEY = 'wa-vue-chat-read-state-v2';
 const AVATAR_CACHE_KEY = 'wa-vue-avatar-cache-v1';
@@ -325,6 +330,41 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     avatarUrlByChat.value = {};
   }
 
+  function setMessagesForChat(chatId, list) {
+    if (!chatId) {
+      return;
+    }
+
+    messagesByChat.value[chatId] = Array.isArray(list) ? list : [];
+  }
+
+  function removeMessageFromChat(chatId, messageId) {
+    if (!chatId || !messageId) {
+      return;
+    }
+
+    const current = messagesByChat.value[chatId] || [];
+    const next = current.filter(item => String(item.messageId || item.id || '') !== String(messageId));
+
+    if (next.length !== current.length) {
+      setMessagesForChat(chatId, next);
+    }
+  }
+
+  function patchMessageLimit(chatId, limit) {
+    if (!chatId || !Number.isFinite(Number(limit))) {
+      return;
+    }
+
+    const normalizedLimit = Number(limit);
+
+    if (messageLimitByChat.value[chatId] === normalizedLimit) {
+      return;
+    }
+
+    messageLimitByChat.value[chatId] = normalizedLimit;
+  }
+
   async function loadChats({ forceRefresh = false } = {}) {
     if (loadingChats.value) {
       return chats.value;
@@ -373,6 +413,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
   async function openChat(chat, options = {}) {
     const chatId = getChatId(chat);
+    const limit = options.limit || 50;
 
     if (!chatId) {
       return [];
@@ -383,24 +424,28 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     markChatAsRead(chatId);
 
     if (!messageLimitByChat.value[chatId]) {
-      messageLimitByChat.value = {
-        ...messageLimitByChat.value,
-        [chatId]: options.limit || 50,
-      };
+      patchMessageLimit(chatId, limit);
     }
 
-    const cachedMessages = await readCachedMessages(chatId);
+    const shouldRenderCachedMessages = !messagesByChat.value[chatId];
+    const cachedMessagesPromise = shouldRenderCachedMessages
+      ? readCachedMessagesEntry(chatId, { maxAgeMs: MESSAGE_CACHE_FRESH_MS, allowStale: false })
+      : Promise.resolve(null);
+    const liveMessagesPromise = loadMessages(chatId, { limit });
 
-    if (cachedMessages.length && !messagesByChat.value[chatId]) {
-      messagesByChat.value = {
-        ...messagesByChat.value,
-        [chatId]: cachedMessages.slice(-(options.limit || 50)),
-      };
+    if (shouldRenderCachedMessages) {
+      cachedMessagesPromise
+        .then(entry => {
+          if (!entry || !entry.messages.length || messagesByChat.value[chatId] || activeChatId.value !== chatId) {
+            return;
+          }
+
+          setMessagesForChat(chatId, entry.messages.slice(-limit));
+        })
+        .catch(() => {});
     }
 
-    return loadMessages(chatId, {
-      limit: options.limit || 50,
-    });
+    return liveMessagesPromise;
   }
 
   async function loadMessages(chatId, { limit = 50 } = {}) {
@@ -413,17 +458,11 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       });
       const list = appendQueuedMessages(chatId, Array.isArray(response.list) ? response.list : []);
 
-      messagesByChat.value = {
-        ...messagesByChat.value,
-        [chatId]: list,
-      };
+      setMessagesForChat(chatId, list);
       syncChatSummaryFromMessages(chatId, list, {
         markRead: chatId === activeChatId.value,
       });
-      messageLimitByChat.value = {
-        ...messageLimitByChat.value,
-        [chatId]: limit,
-      };
+      patchMessageLimit(chatId, limit);
       writeCachedMessages(chatId, list);
 
       return list;
@@ -954,12 +993,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
 
     const response = await runMessageOperation(() => ensureApi().deleteMessage(target.chatId, target.messageId, options));
-    const current = messagesByChat.value[target.chatId] || [];
-
-    messagesByChat.value = {
-      ...messagesByChat.value,
-      [target.chatId]: current.filter(item => String(item.messageId || item.id || '') !== target.messageId),
-    };
+    removeMessageFromChat(target.chatId, target.messageId);
 
     return response;
   }
@@ -1245,16 +1279,15 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       }
 
       if (action === 'clear') {
-        messagesByChat.value = {
-          ...messagesByChat.value,
-          [chatId]: [],
-        };
+        setMessagesForChat(chatId, []);
       }
 
-      await Promise.allSettled([
-        loadChats({ forceRefresh: true }),
-        loadGroups({ forceRefresh: true }),
-      ]);
+      if (action !== 'mark-read') {
+        await Promise.allSettled([
+          loadChats({ forceRefresh: true }),
+          loadGroups({ forceRefresh: true }),
+        ]);
+      }
 
       return response;
     } catch (error) {
@@ -1369,10 +1402,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       next.push(message);
     }
 
-    messagesByChat.value = {
-      ...messagesByChat.value,
-      [chatId]: next,
-    };
+    setMessagesForChat(chatId, next);
 
     mergeCachedMessage(chatId, message);
   }
@@ -1398,10 +1428,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       ...message,
     };
 
-    messagesByChat.value = {
-      ...messagesByChat.value,
-      [chatId]: next,
-    };
+    setMessagesForChat(chatId, next);
 
     mergeCachedMessage(chatId, next[existingIndex]);
   }
@@ -1771,14 +1798,17 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     rememberChatRead(chatId, resolveChatActivityTimestamp(chatId));
 
-    chats.value = chats.value.map(chat => {
+    let updated = false;
+    const nextChats = chats.value.map(chat => {
       if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
         return chat;
       }
 
-      if (Number(chat.unreadCount || 0) === 0) {
+      if (Number(chat.unreadCount || 0) === 0 && Number(chat.unread || 0) === 0) {
         return chat;
       }
+
+      updated = true;
 
       return {
         ...chat,
@@ -1786,6 +1816,10 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         unread: 0,
       };
     });
+
+    if (updated) {
+      chats.value = nextChats;
+    }
   }
 
   function syncChatSummaryFromMessages(chatId, list, { markRead = false } = {}) {
@@ -1821,14 +1855,12 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     const summaryTimestamp = toUnixTimestamp(message.timestamp || 0, 0);
     let updated = false;
 
-    chats.value = chats.value.map(chat => {
+    const nextChats = chats.value.map(chat => {
       if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
         return chat;
       }
 
-      updated = true;
-
-      return {
+      const nextChat = {
         ...chat,
         lastMessage: {
           ...(chat.lastMessage && typeof chat.lastMessage === 'object' ? chat.lastMessage : {}),
@@ -1854,15 +1886,51 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         unreadCount: markRead ? 0 : Number(chat.unreadCount || 0),
         unread: markRead ? 0 : Number(chat.unread || 0),
       };
+
+      if (hasSameChatSummary(chat, nextChat)) {
+        return chat;
+      }
+
+      updated = true;
+
+      return nextChat;
     });
 
     if (markRead) {
       rememberChatRead(chatId, summaryTimestamp);
     }
 
-    if (!updated) {
-      return;
+    if (updated) {
+      chats.value = nextChats;
     }
+  }
+
+  function hasSameChatSummary(current, next) {
+    return String(current.lastMessageBody || '') === String(next.lastMessageBody || '') &&
+      String(current.bodyPreview || '') === String(next.bodyPreview || '') &&
+      toUnixTimestamp(current.lastMessageTimestamp || 0, 0) === toUnixTimestamp(next.lastMessageTimestamp || 0, 0) &&
+      toUnixTimestamp(current.timestamp || 0, 0) === toUnixTimestamp(next.timestamp || 0, 0) &&
+      toUnixTimestamp(current.t || 0, 0) === toUnixTimestamp(next.t || 0, 0) &&
+      Number(current.unreadCount || 0) === Number(next.unreadCount || 0) &&
+      Number(current.unread || 0) === Number(next.unread || 0) &&
+      getMessageSignature(current.lastMessage) === getMessageSignature(next.lastMessage);
+  }
+
+  function getMessageSignature(message) {
+    if (!message || typeof message !== 'object') {
+      return '';
+    }
+
+    return [
+      message.messageId || message.id || '',
+      message.timestamp || '',
+      message.bodyPreview || '',
+      message.body || '',
+      message.caption || '',
+      message.type || '',
+      message.status || '',
+      message.ack ?? '',
+    ].join('|');
   }
 
   function rememberChatRead(chatId, timestamp) {
@@ -2133,7 +2201,8 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return;
     }
 
-    chats.value = chats.value.map(chat => {
+    let updated = false;
+    const nextChats = chats.value.map(chat => {
       if (getChatId(chat) !== chatId || !chat || typeof chat !== 'object') {
         return chat;
       }
@@ -2169,12 +2238,40 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         next.contact.shortName = displayName;
       }
 
+      if (hasSameChatIdentity(chat, next)) {
+        return chat;
+      }
+
+      updated = true;
+
       return next;
     });
-    if (activeChatId.value === chatId) {
-      const chat = findChatById(chatId);
-      activeChatName.value = chat ? getSafeChatName(chat) : displayName;
+
+    if (updated) {
+      chats.value = nextChats;
     }
+
+    if (activeChatId.value === chatId) {
+      const chat = (updated ? nextChats : chats.value).find(item => getChatId(item) === chatId) || null;
+      const nextName = chat ? getSafeChatName(chat) : displayName;
+
+      if (activeChatName.value !== nextName) {
+        activeChatName.value = nextName;
+      }
+    }
+  }
+
+  function hasSameChatIdentity(current, next) {
+    const currentContact = current.contact && typeof current.contact === 'object' ? current.contact : {};
+    const nextContact = next.contact && typeof next.contact === 'object' ? next.contact : {};
+
+    return String(current.displayName || '') === String(next.displayName || '') &&
+      String(current.linkedEntityName || '') === String(next.linkedEntityName || '') &&
+      String(current.name || '') === String(next.name || '') &&
+      String(current.formattedTitle || '') === String(next.formattedTitle || '') &&
+      String(currentContact.name || '') === String(nextContact.name || '') &&
+      String(currentContact.pushname || '') === String(nextContact.pushname || '') &&
+      String(currentContact.shortName || '') === String(nextContact.shortName || '');
   }
 
   function normalizeTimestamp(value) {

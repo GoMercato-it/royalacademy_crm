@@ -105,7 +105,7 @@ export const useWebSocketStore = defineStore('websocket', () => {
           };
         }
 
-        manager.unsubscribe('WhatsApp', handler);
+        safeUnsubscribe('WhatsApp', handler);
         manager.subscribe('WhatsApp', handler);
 
         subscribed.value = true;
@@ -123,13 +123,43 @@ export const useWebSocketStore = defineStore('websocket', () => {
   function disconnect() {
     clearRetry();
 
-    if (manager && handler) {
-      try {
-        manager.unsubscribe('WhatsApp', handler);
-      } catch (error) {}
-    }
+    safeUnsubscribe('WhatsApp', handler);
 
     subscribed.value = false;
+  }
+
+  function safeUnsubscribe(category, callback) {
+    if (!manager || !callback) {
+      return;
+    }
+
+    removeQueuedSubscription(category, callback);
+
+    if (!manager.connection || !manager.isConnected) {
+      return;
+    }
+
+    if (!hasActiveSubscription(category, callback)) {
+      return;
+    }
+
+    try {
+      manager.unsubscribe(category, callback);
+    } catch (error) {}
+  }
+
+  function removeQueuedSubscription(category, callback) {
+    if (Array.isArray(manager.subscribeQueue)) {
+      manager.subscribeQueue = manager.subscribeQueue.filter(item => {
+        return item.category !== category || item.callback !== callback;
+      });
+    }
+  }
+
+  function hasActiveSubscription(category, callback) {
+    return Array.isArray(manager.subscriptions) && manager.subscriptions.some(item => {
+      return item.category === category && item.callback === callback;
+    });
   }
 
   function resolveManager() {

@@ -22,6 +22,11 @@ use Espo\Modules\WhatsApp\Services\WorkflowActionService;
 
 class WhatsApp
 {
+    private const CHAT_LIST_DEFAULT_LIMIT = 50;
+    private const CHAT_LIST_MAX_LIMIT = 100;
+    private const MESSAGE_LIST_DEFAULT_LIMIT = 50;
+    private const MESSAGE_LIST_MAX_LIMIT = 1000;
+
     public function __construct(
         private WhatsAppClient $whatsAppClient,
         private MessageDispatchService $messageDispatchService,
@@ -112,7 +117,20 @@ class WhatsApp
     public function getActionGetChats(Request $request, Response $response): array
     {
         $refresh = filter_var($request->getQueryParam('refresh') ?? false, FILTER_VALIDATE_BOOL);
-        $snapshot = $this->chatListSnapshotService->getChatList($refresh);
+        $hasPagination = $request->getQueryParam('limit') !== null || $request->getQueryParam('offset') !== null;
+        $limit = $hasPagination
+            ? $this->readIntQueryParam(
+                $request,
+                'limit',
+                self::CHAT_LIST_DEFAULT_LIMIT,
+                1,
+                self::CHAT_LIST_MAX_LIMIT
+            )
+            : null;
+        $offset = $hasPagination
+            ? $this->readIntQueryParam($request, 'offset', 0, 0, PHP_INT_MAX)
+            : 0;
+        $snapshot = $this->chatListSnapshotService->getChatList($refresh, $limit, $offset);
 
         return [
             'success' => true,
@@ -120,6 +138,11 @@ class WhatsApp
             'fromCache' => $snapshot['fromCache'],
             'stale' => $snapshot['stale'],
             'cachedAt' => $snapshot['cachedAt'],
+            'total' => $snapshot['total'],
+            'limit' => $snapshot['limit'],
+            'offset' => $snapshot['offset'],
+            'hasMore' => $snapshot['hasMore'],
+            'nextOffset' => $snapshot['nextOffset'],
         ];
     }
 
@@ -131,12 +154,29 @@ class WhatsApp
             throw new BadRequest('chatId is required');
         }
 
+        $page = $this->messageDispatchService->getStoredMessagesPage(
+            $chatId,
+            $this->readIntQueryParam(
+                $request,
+                'limit',
+                self::MESSAGE_LIST_DEFAULT_LIMIT,
+                1,
+                self::MESSAGE_LIST_MAX_LIMIT
+            ),
+            $this->readIntQueryParam($request, 'offset', 0, 0, PHP_INT_MAX),
+            $this->readOptionalTimestampQueryParam($request, 'before')
+                ?? $this->readOptionalTimestampQueryParam($request, 'cursor')
+        );
+
         return [
             'success' => true,
-            'list' => $this->messageDispatchService->getStoredMessages(
-                $chatId,
-                max(1, min(1000, (int) ($request->getQueryParam('limit') ?? 50)))
-            ),
+            'list' => $page['list'],
+            'total' => $page['total'],
+            'limit' => $page['limit'],
+            'offset' => $page['offset'],
+            'hasMore' => $page['hasMore'],
+            'nextOffset' => $page['nextOffset'],
+            'nextCursor' => $page['nextCursor'],
         ];
     }
 
@@ -901,6 +941,34 @@ class WhatsApp
         }
 
         return null;
+    }
+
+    private function readIntQueryParam(Request $request, string $name, int $default, int $min, int $max): int
+    {
+        $rawValue = $request->getQueryParam($name);
+
+        if ($rawValue === null || $rawValue === '' || !is_numeric($rawValue)) {
+            return $default;
+        }
+
+        return max($min, min($max, (int) $rawValue));
+    }
+
+    private function readOptionalTimestampQueryParam(Request $request, string $name): ?int
+    {
+        $rawValue = $request->getQueryParam($name);
+
+        if ($rawValue === null || $rawValue === '') {
+            return null;
+        }
+
+        if (is_numeric($rawValue)) {
+            return max(0, (int) $rawValue);
+        }
+
+        $parsed = strtotime((string) $rawValue);
+
+        return $parsed === false ? null : $parsed;
     }
 
     /**

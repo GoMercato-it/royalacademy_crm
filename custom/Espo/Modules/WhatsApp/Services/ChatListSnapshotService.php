@@ -21,20 +21,32 @@ class ChatListSnapshotService
     }
 
     /**
-     * @return array{list: array<int, mixed>, fromCache: bool, stale: bool, cachedAt: ?int}
+     * @return array{
+     *     list: array<int, mixed>,
+     *     fromCache: bool,
+     *     stale: bool,
+     *     cachedAt: ?int,
+     *     total: int,
+     *     limit: ?int,
+     *     offset: int,
+     *     hasMore: bool,
+     *     nextOffset: ?int
+     * }
      */
-    public function getChatList(bool $forceRefresh = false): array
+    public function getChatList(bool $forceRefresh = false, ?int $limit = null, int $offset = 0): array
     {
         $snapshot = $this->readSnapshot();
         $isFresh = $snapshot && ((time() - (int) ($snapshot['savedAt'] ?? 0)) < self::TTL_SECONDS);
 
         if (!$forceRefresh && $isFresh) {
-            return [
-                'list' => $snapshot['list'],
-                'fromCache' => true,
-                'stale' => false,
-                'cachedAt' => (int) ($snapshot['savedAt'] ?? 0),
-            ];
+            return $this->buildResponse(
+                $snapshot['list'],
+                true,
+                false,
+                (int) ($snapshot['savedAt'] ?? 0),
+                $limit,
+                $offset
+            );
         }
 
         try {
@@ -47,32 +59,24 @@ class ChatListSnapshotService
             if (is_array($list)) {
                 $this->writeSnapshot($list);
 
-                return [
-                    'list' => $list,
-                    'fromCache' => false,
-                    'stale' => false,
-                    'cachedAt' => time(),
-                ];
+                return $this->buildResponse($list, false, false, time(), $limit, $offset);
             }
         } catch (\Throwable $e) {
             $this->log->warning('WhatsApp chat snapshot refresh failed: ' . $e->getMessage());
         }
 
         if ($snapshot) {
-            return [
-                'list' => $snapshot['list'],
-                'fromCache' => true,
-                'stale' => true,
-                'cachedAt' => (int) ($snapshot['savedAt'] ?? 0),
-            ];
+            return $this->buildResponse(
+                $snapshot['list'],
+                true,
+                true,
+                (int) ($snapshot['savedAt'] ?? 0),
+                $limit,
+                $offset
+            );
         }
 
-        return [
-            'list' => [],
-            'fromCache' => false,
-            'stale' => false,
-            'cachedAt' => null,
-        ];
+        return $this->buildResponse([], false, false, null, $limit, $offset);
     }
 
     public function clearSnapshot(): void
@@ -82,6 +86,63 @@ class ChatListSnapshotService
         if (is_file($path)) {
             @unlink($path);
         }
+    }
+
+    /**
+     * @param array<int, mixed> $list
+     * @return array{
+     *     list: array<int, mixed>,
+     *     fromCache: bool,
+     *     stale: bool,
+     *     cachedAt: ?int,
+     *     total: int,
+     *     limit: ?int,
+     *     offset: int,
+     *     hasMore: bool,
+     *     nextOffset: ?int
+     * }
+     */
+    private function buildResponse(
+        array $list,
+        bool $fromCache,
+        bool $stale,
+        ?int $cachedAt,
+        ?int $limit,
+        int $offset
+    ): array {
+        $list = array_values($list);
+        $total = count($list);
+
+        if ($limit === null) {
+            return [
+                'list' => $list,
+                'fromCache' => $fromCache,
+                'stale' => $stale,
+                'cachedAt' => $cachedAt,
+                'total' => $total,
+                'limit' => null,
+                'offset' => 0,
+                'hasMore' => false,
+                'nextOffset' => null,
+            ];
+        }
+
+        $offset = max(0, $offset);
+        $page = array_slice($list, $offset, $limit);
+        $nextOffset = $offset + $limit;
+        $hasMore = $nextOffset < $total;
+
+        return [
+            'list' => $page,
+            'fromCache' => $fromCache,
+            'stale' => $stale,
+            'cachedAt' => $cachedAt,
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+            'hasMore' => $hasMore,
+            'nextOffset' => $hasMore ? $nextOffset : null,
+        ];
     }
 
     private function getSnapshotPath(): string

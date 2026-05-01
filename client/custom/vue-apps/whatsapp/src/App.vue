@@ -129,13 +129,21 @@ function updateViewportHeight() {
 
 function openChat(chat) {
   targetMessageId.value = '';
-  return whatsappStore.openChat(chat)
-    .then(() => Promise.allSettled([
-      whatsappStore.loadChatContext(),
-      whatsappStore.loadConversationHistory(),
-      whatsappStore.runChatOperation('mark-read').catch(() => null),
-    ]))
+
+  const messagesPromise = whatsappStore.openChat(chat);
+  const markReadPromise = Promise.resolve()
+    .then(() => whatsappStore.runChatOperation('mark-read').catch(() => null));
+
+  return Promise.allSettled([messagesPromise, markReadPromise])
     .catch(() => null);
+}
+
+function loadContextDetails() {
+  return whatsappStore.loadChatContext().catch(() => null);
+}
+
+function loadConversationHistory() {
+  return whatsappStore.loadConversationHistory().catch(() => []);
 }
 
 function hasInitialChatTarget() {
@@ -895,6 +903,8 @@ function clearToastTimer() {
         @jump-conversation="jumpConversation"
         @chat-operation="handleChatOperation"
         @contact-operation="handleContactOperation"
+        @load-context="loadContextDetails"
+        @load-history="loadConversationHistory"
       />
     </div>
 

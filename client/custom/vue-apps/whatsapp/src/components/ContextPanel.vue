@@ -1,5 +1,6 @@
 <script setup>
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import ChatAvatar from './ChatAvatar.vue';
 import ConversationPreview from './ConversationPreview.vue';
 
 const props = defineProps({
@@ -41,12 +42,33 @@ const props = defineProps({
   },
 });
 
-const emit = defineEmits(['open-record', 'create-contact', 'jump-conversation', 'chat-operation', 'contact-operation']);
+const emit = defineEmits([
+  'open-record',
+  'create-contact',
+  'jump-conversation',
+  'chat-operation',
+  'contact-operation',
+  'load-context',
+  'load-history',
+]);
 
+const detailsOpen = ref(false);
 const chatActionsOpen = ref(false);
 const contactActionsOpen = ref(false);
+const historyOpen = ref(false);
 
 const isGroupChat = computed(() => String(props.activeChatId || '').endsWith('@g.us'));
+const hasContext = computed(() => !!props.context);
+const isContextRefreshing = computed(() => !!props.activeChatId && props.loadingContext);
+const isHistoryRefreshing = computed(() => !!props.activeChatId && props.loadingHistory);
+
+const profileSubtitle = computed(() => {
+  if (isGroupChat.value) {
+    return 'Group chat';
+  }
+
+  return isLidChatId(props.activeChatId) ? 'WhatsApp contact' : 'Direct chat';
+});
 
 const chatIsArchived = computed(() => {
   const chat = props.activeChat;
@@ -120,6 +142,29 @@ const candidateList = computed(() => {
 
   return Array.isArray(context.candidateList) ? context.candidateList : [];
 });
+
+watch(() => props.activeChatId, () => {
+  detailsOpen.value = false;
+  chatActionsOpen.value = false;
+  contactActionsOpen.value = false;
+  historyOpen.value = false;
+});
+
+function toggleDetails() {
+  detailsOpen.value = !detailsOpen.value;
+
+  if (detailsOpen.value && !props.context && !props.loadingContext) {
+    emit('load-context');
+  }
+}
+
+function toggleHistory() {
+  historyOpen.value = !historyOpen.value;
+
+  if (historyOpen.value && !isGroupChat.value && !props.history.length && !props.loadingHistory) {
+    emit('load-history');
+  }
+}
 
 function openRecord(entityType, entityId) {
   if (entityType && entityId) {
@@ -304,73 +349,98 @@ function emitContactOperation(action) {
 <template>
   <aside class="wa-context-panel">
     <section class="wa-context-card">
-      <p class="wa-vue-kicker">Details</p>
-
       <div v-if="!activeChatId" class="wa-context-muted">
         Select a chat.
       </div>
 
-      <div v-else-if="loadingContext" class="wa-context-muted">
-        Loading...
-      </div>
-
       <template v-else>
-        <h2>{{ title }}</h2>
-
-        <div v-if="isGroupChat" class="wa-context-muted">
-          Group chat.
+        <div class="wa-context-profile">
+          <ChatAvatar :chat-id="activeChatId" :name="title" />
+          <div>
+            <p class="wa-vue-kicker">Details</p>
+            <h2>{{ title }}</h2>
+            <span>{{ profileSubtitle }}</span>
+          </div>
         </div>
 
-        <template v-else>
-          <div v-if="identityLabel" class="wa-context-row">
-            <strong>WhatsApp ID</strong>
-            <span>{{ identityLabel }}</span>
-          </div>
-          <div class="wa-context-row">
-            <strong>Phone</strong>
-            <span>{{ phone || 'N/D' }}</span>
-          </div>
+        <div class="wa-context-section-list">
+          <button
+            type="button"
+            class="wa-actions-toggle"
+            :class="{ 'is-open': detailsOpen }"
+            :aria-expanded="detailsOpen"
+            aria-label="Toggle CRM details"
+            @click="toggleDetails"
+          >
+            <span>CRM details</span>
+            <span v-if="isContextRefreshing" class="wa-context-dot"></span>
+            <span class="fas fa-chevron-down"></span>
+          </button>
 
-          <div v-if="context && context.isLinked" class="wa-context-linked">
-            <div class="wa-context-row">
-              <strong>CRM</strong>
-              <span>{{ context.linkedEntityType }} · {{ context.linkedEntityName }}</span>
+          <div v-if="detailsOpen" class="wa-context-section-body">
+            <div v-if="isContextRefreshing" class="wa-context-refresh" aria-live="polite">
+              Updating details...
             </div>
-            <button
-              type="button"
-              class="btn btn-default btn-sm"
-              aria-label="Open linked CRM record"
-              @click="openRecord(context.linkedEntityType, context.linkedEntityId)"
-            >
-              Open
-            </button>
+
+            <div v-if="isGroupChat" class="wa-context-muted">
+              Group chat.
+            </div>
+
+            <template v-else>
+              <div v-if="identityLabel" class="wa-context-row">
+                <strong>WhatsApp ID</strong>
+                <span>{{ identityLabel }}</span>
+              </div>
+              <div class="wa-context-row">
+                <strong>Phone</strong>
+                <span>{{ phone || 'N/D' }}</span>
+              </div>
+
+              <div v-if="loadingContext && !hasContext" class="wa-context-row is-loading">
+                <strong>CRM</strong>
+                <span>Updating...</span>
+              </div>
+
+              <div v-else-if="context && context.isLinked" class="wa-context-linked">
+                <div class="wa-context-row">
+                  <strong>CRM</strong>
+                  <span>{{ context.linkedEntityType }} · {{ context.linkedEntityName }}</span>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-default btn-sm"
+                  aria-label="Open linked CRM record"
+                  @click="openRecord(context.linkedEntityType, context.linkedEntityId)"
+                >
+                  Open
+                </button>
+              </div>
+
+              <div v-else-if="!loadingContext" class="wa-context-actions">
+                <button type="button" class="btn btn-primary btn-sm" aria-label="Create CRM contact from WhatsApp chat" @click="emit('create-contact')">
+                  Create CRM contact
+                </button>
+              </div>
+
+              <div v-if="context && context.isAmbiguous" class="wa-context-muted">
+                Multiple matching CRM records.
+              </div>
+
+              <div v-if="candidateList.length" class="wa-context-candidates">
+                <button
+                  v-for="candidate in candidateList"
+                  :key="`${candidate.entityType}-${candidate.entityId}`"
+                  type="button"
+                  class="btn btn-default btn-sm"
+                  :aria-label="`Open ${candidate.entityType} ${candidate.entityName}`"
+                  @click="openRecord(candidate.entityType, candidate.entityId)"
+                >
+                  {{ candidate.entityType }}: {{ candidate.entityName }}
+                </button>
+              </div>
+            </template>
           </div>
 
-          <div v-else class="wa-context-actions">
-            <button type="button" class="btn btn-primary btn-sm" aria-label="Create CRM contact from WhatsApp chat" @click="emit('create-contact')">
-              Create CRM contact
-            </button>
-          </div>
-
-          <div v-if="context && context.isAmbiguous" class="wa-context-muted">
-            Multiple matching CRM records.
-          </div>
-
-          <div v-if="candidateList.length" class="wa-context-candidates">
-            <button
-              v-for="candidate in candidateList"
-              :key="`${candidate.entityType}-${candidate.entityId}`"
-              type="button"
-              class="btn btn-default btn-sm"
-              :aria-label="`Open ${candidate.entityType} ${candidate.entityName}`"
-              @click="openRecord(candidate.entityType, candidate.entityId)"
-            >
-              {{ candidate.entityType }}: {{ candidate.entityName }}
-            </button>
-          </div>
-        </template>
-
-        <div class="wa-action-section">
           <button
             type="button"
             class="wa-actions-toggle"
@@ -382,7 +452,7 @@ function emitContactOperation(action) {
             <span>Chat actions</span>
             <span class="fas fa-chevron-down"></span>
           </button>
-          <div class="wa-actions-dropdown" :class="{ 'is-open': chatActionsOpen }">
+          <div v-if="chatActionsOpen" class="wa-actions-dropdown is-open">
             <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitChatOperation(chatIsArchived ? 'unarchive' : 'archive')">
               <span class="fas" :class="chatIsArchived ? 'fa-box-open' : 'fa-box-archive'"></span>
               <span>{{ chatIsArchived ? 'Unarchive' : 'Archive' }}</span>
@@ -405,10 +475,9 @@ function emitContactOperation(action) {
               <span>Clear messages</span>
             </button>
           </div>
-        </div>
 
-        <div v-if="!isGroupChat" class="wa-action-section">
           <button
+            v-if="!isGroupChat"
             type="button"
             class="wa-actions-toggle"
             :class="{ 'is-open': contactActionsOpen }"
@@ -419,7 +488,7 @@ function emitContactOperation(action) {
             <span>Contact actions</span>
             <span class="fas fa-chevron-down"></span>
           </button>
-          <div class="wa-actions-dropdown" :class="{ 'is-open': contactActionsOpen }">
+          <div v-if="!isGroupChat && contactActionsOpen" class="wa-actions-dropdown is-open">
             <button type="button" class="wa-dropdown-item" :disabled="actionBusy" @click="emitContactOperation('status')">
               <span class="fas fa-circle-info"></span>
               <span>Get status</span>
@@ -451,45 +520,66 @@ function emitContactOperation(action) {
     </section>
 
     <section class="wa-history-card">
-      <p class="wa-vue-kicker">History</p>
-
       <div v-if="!activeChatId" class="wa-context-muted">
         Select a chat.
       </div>
 
-      <div v-else-if="loadingHistory" class="wa-context-muted">
-        Loading...
-      </div>
-
-      <div v-else-if="isGroupChat" class="wa-context-muted">
-        Not available for group chats.
-      </div>
-
-      <div v-else-if="!history.length" class="wa-context-muted">
-        No tracked conversations.
-      </div>
-
-      <div v-else class="wa-history-list">
-        <ConversationPreview
-          v-for="item in history"
-          :key="item.id || item.firstMessageMessageId || item.startedAt"
-          :conversation="item"
+      <template v-else>
+        <button
+          type="button"
+          class="wa-actions-toggle"
+          :class="{ 'is-open': historyOpen }"
+          :aria-expanded="historyOpen"
+          aria-label="Toggle conversation history"
+          @click="toggleHistory"
         >
-          <button
-            type="button"
-            class="wa-history-item"
-            :class="{ 'is-disabled': !item.firstMessageMessageId }"
-            :aria-disabled="!item.firstMessageMessageId"
-            :aria-label="`Open conversation from ${formatDate(item.startedAt || item.createdAt) || 'unknown date'}`"
-            @click="emit('jump-conversation', item.firstMessageMessageId)"
-          >
-            <span class="wa-history-range">{{ formatRange(item) }}</span>
-            <span class="wa-history-date">{{ formatDate(item.startedAt || item.createdAt) }}</span>
-            <strong>{{ getConversationName(item) }}</strong>
-            <span>{{ item.status || 'closed' }} · {{ item.messageCount || 0 }} msg</span>
-          </button>
-        </ConversationPreview>
-      </div>
+          <span>History</span>
+          <span v-if="isHistoryRefreshing" class="wa-context-dot"></span>
+          <span class="fas fa-chevron-down"></span>
+        </button>
+
+        <div v-if="historyOpen" class="wa-context-section-body">
+          <div v-if="isHistoryRefreshing" class="wa-context-refresh" aria-live="polite">
+            Updating history...
+          </div>
+
+          <div v-if="isGroupChat" class="wa-context-muted">
+            Not available for group chats.
+          </div>
+
+          <div v-else-if="isHistoryRefreshing && !history.length" class="wa-history-placeholder" aria-hidden="true">
+            <div></div>
+            <div></div>
+            <div></div>
+          </div>
+
+          <div v-else-if="!history.length" class="wa-context-muted">
+            No tracked conversations.
+          </div>
+
+          <div v-else class="wa-history-list">
+            <ConversationPreview
+              v-for="item in history"
+              :key="item.id || item.firstMessageMessageId || item.startedAt"
+              :conversation="item"
+            >
+              <button
+                type="button"
+                class="wa-history-item"
+                :class="{ 'is-disabled': !item.firstMessageMessageId }"
+                :aria-disabled="!item.firstMessageMessageId"
+                :aria-label="`Open conversation from ${formatDate(item.startedAt || item.createdAt) || 'unknown date'}`"
+                @click="emit('jump-conversation', item.firstMessageMessageId)"
+              >
+                <span class="wa-history-range">{{ formatRange(item) }}</span>
+                <span class="wa-history-date">{{ formatDate(item.startedAt || item.createdAt) }}</span>
+                <strong>{{ getConversationName(item) }}</strong>
+                <span>{{ item.status || 'closed' }} · {{ item.messageCount || 0 }} msg</span>
+              </button>
+            </ConversationPreview>
+          </div>
+        </div>
+      </template>
     </section>
   </aside>
 </template>
