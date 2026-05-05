@@ -2,10 +2,7 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import { createEspoApiClient } from '../utils/api';
 import {
-  MESSAGE_CACHE_FRESH_MS,
   mergeCachedMessage,
-  readCachedMessagesEntry,
-  writeCachedMessages,
 } from '../utils/messageCache';
 
 const CHAT_READ_STATE_KEY = 'wa-vue-chat-read-state-v2';
@@ -14,6 +11,7 @@ const AVATAR_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const OUTBOX_CACHE_KEY = 'wa-vue-outbox-v1';
 const OUTBOX_MAX = 100;
 const LOCAL_REACTION_SENDER = '__crm_user__';
+const OUTGOING_ECHO_WINDOW_SECONDS = 180;
 
 function clearLegacyChatCaches() {
   try {
@@ -156,10 +154,12 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   const loadingHistory = ref(false);
   const sendingMessage = ref(false);
   const lastError = ref(null);
+  const lastMessageLoadError = ref(null);
   const queuedMessages = ref(readOutbox());
   const avatarRequests = new Map();
   const conversationPreviewRequests = new Map();
   let flushingQueue = false;
+  let messageLoadRequestId = 0;
 
   const activeMessages = computed(() => {
     if (!activeChatId.value) {
@@ -328,6 +328,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     historyByChat.value = {};
     conversationPreviewById.value = {};
     avatarUrlByChat.value = {};
+    lastMessageLoadError.value = null;
   }
 
   function setMessagesForChat(chatId, list) {
@@ -414,6 +415,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   async function openChat(chat, options = {}) {
     const chatId = getChatId(chat);
     const limit = options.limit || 50;
+    const previousChatId = activeChatId.value;
 
     if (!chatId) {
       return [];
@@ -421,56 +423,58 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     activeChatId.value = chatId;
     activeChatName.value = typeof chat === 'object' ? getSafeChatName(chat) : '';
+    lastMessageLoadError.value = null;
     markChatAsRead(chatId);
 
     if (!messageLimitByChat.value[chatId]) {
       patchMessageLimit(chatId, limit);
     }
 
-    const shouldRenderCachedMessages = !messagesByChat.value[chatId];
-    const cachedMessagesPromise = shouldRenderCachedMessages
-      ? readCachedMessagesEntry(chatId, { maxAgeMs: MESSAGE_CACHE_FRESH_MS, allowStale: false })
-      : Promise.resolve(null);
-    const liveMessagesPromise = loadMessages(chatId, { limit });
-
-    if (shouldRenderCachedMessages) {
-      cachedMessagesPromise
-        .then(entry => {
-          if (!entry || !entry.messages.length || messagesByChat.value[chatId] || activeChatId.value !== chatId) {
-            return;
-          }
-
-          setMessagesForChat(chatId, entry.messages.slice(-limit));
-        })
-        .catch(() => {});
+    if (previousChatId !== chatId) {
+      setMessagesForChat(chatId, []);
     }
 
-    return liveMessagesPromise;
+    return loadMessages(chatId, { limit });
   }
 
   async function loadMessages(chatId, { limit = 50 } = {}) {
+    const requestId = ++messageLoadRequestId;
+
     loadingMessages.value = true;
     lastError.value = null;
+    lastMessageLoadError.value = null;
 
     try {
       const response = await ensureApi().getChatMessages(chatId, {
         limit,
       });
+
+      if (response && response.success === false) {
+        const error = new Error(response.message || response.error || 'Unable to load messages from WhatsApp Web.');
+        error.code = response.error || 'WA_WEB_FETCH_FAILED';
+        throw error;
+      }
+
       const list = appendQueuedMessages(chatId, Array.isArray(response.list) ? response.list : []);
 
       setMessagesForChat(chatId, list);
       syncChatSummaryFromMessages(chatId, list, {
         markRead: chatId === activeChatId.value,
       });
-      patchMessageLimit(chatId, limit);
-      writeCachedMessages(chatId, list);
+      patchMessageLimit(chatId, Number(response.limit) || limit);
 
       return list;
     } catch (error) {
-      lastError.value = error;
+      if (requestId === messageLoadRequestId && activeChatId.value === chatId) {
+        lastError.value = error;
+        lastMessageLoadError.value = error;
+      }
+
       throw error;
     } finally {
-      loadingMessages.value = false;
+      if (requestId === messageLoadRequestId) {
+        loadingMessages.value = false;
+      }
     }
   }
 
@@ -480,10 +484,9 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
 
     const currentLimit = messageLimitByChat.value[chatId] || 50;
+    const nextLimit = Math.min(currentLimit + 50, 200);
 
-    return loadMessages(chatId, {
-      limit: Math.min(currentLimit + 50, 1000),
-    });
+    return nextLimit > currentLimit ? loadMessages(chatId, { limit: nextLimit }) : activeMessages.value;
   }
 
   async function refreshActiveMessages() {
@@ -1155,11 +1158,16 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     return list
       .filter(item => item && typeof item === 'object' && String(item.reaction || '').trim())
-      .map(item => ({
-        ...item,
-        senderId: String(item.senderId || item.id || ''),
-        reaction: String(item.reaction || '').trim(),
-      }));
+      .map(item => {
+        const isMine = isCurrentUserReaction(item);
+
+        return {
+          ...item,
+          senderId: isMine ? LOCAL_REACTION_SENDER : getReactionSenderId(item),
+          reaction: String(item.reaction || '').trim(),
+          fromMe: isMine || isTruthyFlag(item.fromMe),
+        };
+      });
   }
 
   function isCurrentUserReaction(reaction) {
@@ -1169,7 +1177,47 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     return reaction.senderId === LOCAL_REACTION_SENDER ||
       isTruthyFlag(reaction.optimistic) ||
-      isTruthyFlag(reaction.fromMe);
+      isTruthyFlag(reaction.fromMe) ||
+      isLocalReactionId(reaction.id);
+  }
+
+  function getReactionSenderId(reaction) {
+    return String(
+      reaction.senderId ||
+      reaction.author ||
+      reaction.participant ||
+      reaction.from ||
+      readReactionObjectValue(reaction.id, 'participant') ||
+      readReactionObjectValue(reaction.id, 'author') ||
+      readReactionObjectValue(reaction.id, 'from') ||
+      readReactionObjectValue(reaction.id, '_serialized') ||
+      readReactionObjectValue(reaction.id, 'id') ||
+      ''
+    );
+  }
+
+  function isLocalReactionId(id) {
+    const value = typeof id === 'string' ?
+      id :
+      readReactionObjectValue(id, '_serialized') || readReactionObjectValue(id, 'id');
+
+    return String(value || '').startsWith('true_');
+  }
+
+  function isLocalMessageId(id) {
+    const value = typeof id === 'string' ?
+      id :
+      readReactionObjectValue(id, '_serialized') || readReactionObjectValue(id, 'id');
+
+    return String(value || '').startsWith('true_');
+  }
+
+  function readReactionObjectValue(value, key) {
+    if (!value || typeof value !== 'object') {
+      return '';
+    }
+
+    return value[key] || '';
   }
 
   function isTruthyFlag(value) {
@@ -1386,25 +1434,27 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return;
     }
 
-    const current = messagesByChat.value[chatId] || [];
-    const messageId = message.messageId || message.id;
-    const existingIndex = messageId
-      ? current.findIndex(item => String(item.messageId || item.id) === String(messageId))
-      : -1;
-    const next = current.slice();
+    const current = messagesByChat.value[chatId];
 
-    if (existingIndex >= 0) {
-      next[existingIndex] = {
-        ...next[existingIndex],
-        ...message,
-      };
-    } else {
-      next.push(message);
+    if (!Array.isArray(current)) {
+      setMessagesForChat(chatId, [message]);
+      mergeCachedMessage(chatId, message);
+      return;
     }
 
-    setMessagesForChat(chatId, next);
+    const messageId = message.messageId || message.id;
+    const existingIndex = findMessageIndexByIdentifier(current, messageId);
+    const echoIndex = existingIndex >= 0 ? -1 : findOutgoingEchoMessageIndex(current, message);
+    const targetIndex = existingIndex >= 0 ? existingIndex : echoIndex;
 
-    mergeCachedMessage(chatId, message);
+    if (targetIndex >= 0) {
+      Object.assign(current[targetIndex], message);
+      dedupeMessageInstances(current, targetIndex);
+      mergeCachedMessage(chatId, current[targetIndex]);
+    } else {
+      current.push(message);
+      mergeCachedMessage(chatId, message);
+    }
   }
 
   function replaceMessage(chatId, oldMessageId, message) {
@@ -1412,25 +1462,164 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return;
     }
 
-    const current = messagesByChat.value[chatId] || [];
-    const existingIndex = oldMessageId
-      ? current.findIndex(item => String(item.messageId || item.id) === String(oldMessageId))
-      : -1;
+    const current = messagesByChat.value[chatId];
 
-    if (existingIndex < 0) {
+    if (!Array.isArray(current)) {
       mergeMessage(chatId, message);
       return;
     }
 
-    const next = current.slice();
-    next[existingIndex] = {
-      ...next[existingIndex],
-      ...message,
-    };
+    const existingIndex = findMessageIndexByIdentifier(current, oldMessageId);
+    const messageIndex = existingIndex >= 0 ? existingIndex : findMessageIndexByIdentifier(current, message.messageId || message.id);
+    const echoIndex = messageIndex >= 0 ? -1 : findOutgoingEchoMessageIndex(current, message);
+    const targetIndex = messageIndex >= 0 ? messageIndex : echoIndex;
 
-    setMessagesForChat(chatId, next);
+    if (targetIndex < 0) {
+      mergeMessage(chatId, message);
+      return;
+    }
 
-    mergeCachedMessage(chatId, next[existingIndex]);
+    Object.assign(current[targetIndex], message);
+    dedupeMessageInstances(current, targetIndex);
+
+    mergeCachedMessage(chatId, current[targetIndex]);
+  }
+
+  function findMessageIndexByIdentifier(list, messageId) {
+    const id = String(messageId || '').trim();
+
+    if (!id || !Array.isArray(list)) {
+      return -1;
+    }
+
+    return list.findIndex(item => String((item && (item.messageId || item.id)) || '').trim() === id);
+  }
+
+  function findOutgoingEchoMessageIndex(list, message) {
+    if (!Array.isArray(list) || !isOutgoingMessage(message)) {
+      return -1;
+    }
+
+    const signature = getOutgoingEchoSignature(message);
+
+    if (!signature) {
+      return -1;
+    }
+
+    for (let index = list.length - 1; index >= 0; index--) {
+      const item = list[index];
+
+      if (!isOutgoingMessage(item) || getOutgoingEchoSignature(item) !== signature) {
+        continue;
+      }
+
+      if (!areMessageTimesClose(item, message)) {
+        continue;
+      }
+
+      if (isLocalEchoMessage(item) || isLocalEchoMessage(message) || hasComplementaryOutgoingSource(item, message)) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  function isOutgoingMessage(message) {
+    return !!(
+      message &&
+      typeof message === 'object' &&
+      (
+        isTruthyFlag(message.fromMe) ||
+        isLocalMessageId(message.id || message.messageId)
+      )
+    );
+  }
+
+  function isLocalEchoMessage(message) {
+    const id = String((message && (message.id || message.messageId)) || '');
+
+    return !!(
+      message &&
+      typeof message === 'object' &&
+      (
+        isTruthyFlag(message.pending) ||
+        isTruthyFlag(message.queued) ||
+        id.startsWith('local-') ||
+        id.startsWith('queued-')
+      )
+    );
+  }
+
+  function hasComplementaryOutgoingSource(first, second) {
+    const firstSource = getMessageSource(first);
+    const secondSource = getMessageSource(second);
+
+    return (firstSource === 'sendmessage' && secondSource === 'webhook') ||
+      (firstSource === 'webhook' && secondSource === 'sendmessage');
+  }
+
+  function getMessageSource(message) {
+    const meta = message && message.payloadMeta && typeof message.payloadMeta === 'object' ? message.payloadMeta : {};
+
+    return String(meta.source || message.source || '').trim().toLowerCase();
+  }
+
+  function getOutgoingEchoSignature(message) {
+    if (!message || typeof message !== 'object') {
+      return '';
+    }
+
+    const body = String(message.body || message.bodyPreview || message.caption || '').trim();
+
+    if (!body) {
+      return '';
+    }
+
+    return [
+      String(message.type || 'chat').trim().toLowerCase(),
+      body,
+    ].join('|');
+  }
+
+  function areMessageTimesClose(first, second) {
+    const firstTime = toUnixTimestamp(first && first.timestamp, 0);
+    const secondTime = toUnixTimestamp(second && second.timestamp, 0);
+
+    if (!firstTime || !secondTime) {
+      return isLocalEchoMessage(first) || isLocalEchoMessage(second);
+    }
+
+    return Math.abs(firstTime - secondTime) <= OUTGOING_ECHO_WINDOW_SECONDS;
+  }
+
+  function dedupeMessageInstances(list, keeperIndex) {
+    if (!Array.isArray(list) || keeperIndex < 0 || keeperIndex >= list.length) {
+      return;
+    }
+
+    const keeper = list[keeperIndex];
+    const keeperId = String((keeper && (keeper.messageId || keeper.id)) || '').trim();
+
+    if (!keeperId) {
+      return;
+    }
+
+    for (let index = list.length - 1; index >= 0; index--) {
+      if (index === keeperIndex) {
+        continue;
+      }
+
+      const itemId = String((list[index] && (list[index].messageId || list[index].id)) || '').trim();
+
+      if (itemId === keeperId) {
+        list.splice(index, 1);
+
+        if (index < keeperIndex) {
+          keeperIndex--;
+        }
+      }
+    }
   }
 
   function handleRealtimeEvent(payload) {
@@ -1560,9 +1749,12 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
   function getRealtimeChatIdCandidates(chatId, message) {
     const payloadMeta = message && message.payloadMeta && typeof message.payloadMeta === 'object' ? message.payloadMeta : {};
+    const isOutgoing = isOutgoingMessage(message);
     const candidates = [
       chatId,
       message && message.chatId,
+      payloadMeta.canonicalChatId,
+      payloadMeta.remote,
       message && getChatId(message.chat),
       message && message.participantWaId,
       message && message.waPhoneNumber,
@@ -1573,13 +1765,10 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     if (!isGroupChatId(primary || '')) {
       candidates.push(
-        message && (message.fromMe ? message.to : message.from),
-        message && message.from,
-        message && message.to,
-        message && message.author,
-        payloadMeta.from,
-        payloadMeta.to,
-        payloadMeta.author
+        isOutgoing ? (message && message.to) : (message && message.from),
+        isOutgoing ? payloadMeta.to : payloadMeta.from,
+        isOutgoing ? null : (message && message.author),
+        isOutgoing ? null : payloadMeta.author
       );
     }
 
@@ -1615,6 +1804,9 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       Math.floor(Date.now() / 1000)
     );
     const isActiveChat = isActiveRealtimeChat(chatId, message);
+    const isOutgoing = isOutgoingMessage(message);
+    const targetChat = findChatByRealtimeIdentity(chatId, message);
+    const targetChatId = targetChat ? getChatId(targetChat) : String(chatId || '').trim();
 
     if (isActiveChat) {
       rememberChatRead(chatId, messageTimestamp);
@@ -1623,7 +1815,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     let updated = false;
 
     chats.value = chats.value.map(chat => {
-      if (!matchesRealtimeChatIdentity(chat, chatId, message)) {
+      if (getChatId(chat) !== targetChatId) {
         return chat;
       }
 
@@ -1658,15 +1850,15 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         t: messageTimestamp,
         unreadCount: isActiveChat
           ? 0
-          : (message.fromMe ? Number(chat.unreadCount || 0) : Number(chat.unreadCount || 0) + 1),
+          : (isOutgoing ? Number(chat.unreadCount || 0) : Number(chat.unreadCount || 0) + 1),
         unread: isActiveChat
           ? 0
-          : (message.fromMe ? Number(chat.unread || 0) : Number(chat.unread || 0) + 1),
+          : (isOutgoing ? Number(chat.unread || 0) : Number(chat.unread || 0) + 1),
       };
     });
 
     if (!updated) {
-      const chat = createChatFromRealtimeMessage(chatId, message, messageTimestamp, isActiveChat);
+      const chat = createChatFromRealtimeMessage(targetChatId || chatId, message, messageTimestamp, isActiveChat);
 
       if (chat) {
         chats.value = [
@@ -1751,7 +1943,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       ''
     ).trim();
     const preview = getRealtimeMessagePreview(message);
-    const unreadCount = isActiveChat || message.fromMe ? 0 : 1;
+    const unreadCount = isActiveChat || isOutgoingMessage(message) ? 0 : 1;
 
     return {
       id,
@@ -2598,6 +2790,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     queuedMessages,
     queuedCount,
     lastError,
+    lastMessageLoadError,
     configure,
     findChatById,
     findChatByPhone,

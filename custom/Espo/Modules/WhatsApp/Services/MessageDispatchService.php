@@ -9,6 +9,8 @@ use Espo\Modules\WhatsApp\Core\WhatsAppClient;
 
 class MessageDispatchService
 {
+    private const LOCAL_REACTION_SENDER = '__crm_user__';
+
     public function __construct(
         private EntityManager $entityManager,
         private WhatsAppClient $whatsappClient,
@@ -79,18 +81,21 @@ class MessageDispatchService
                 continue;
             }
 
+            $fromMe = $this->resolvePayloadFromMe($apiMessage);
+
             try {
                 $this->storeMessage([
                     'body' => $body,
                     'chatId' => $chatId,
-                    'fromMe' => $apiMessage['fromMe'] ?? false,
+                    'fromMe' => $fromMe,
                     'timestamp' => $apiMessage['timestamp'] ?? time(),
-                    'status' => ($apiMessage['fromMe'] ?? false) ? 'Sent' : 'Received',
+                    'status' => $fromMe ? 'Sent' : 'Received',
                     'messageId' => $messageId,
                     'payloadMeta' => [
                         'source' => 'getChatMessages',
                         'type' => $apiMessage['type'] ?? null,
                         'sortSequence' => $this->buildHistorySortSequence($apiMessage['timestamp'] ?? time(), $index),
+                        'canonicalChatId' => $chatId,
                     ],
                 ]);
                 $updated = true;
@@ -121,6 +126,8 @@ class MessageDispatchService
                 $result[] = $normalized;
             }
         }
+
+        usort($result, [$this, 'compareBroadcastMessages']);
 
         return $result;
     }
@@ -153,11 +160,12 @@ class MessageDispatchService
             return null;
         }
 
-        $messageId = $this->extractMessageId($payload->id ?? null);
-        $fromMe = (bool) ($payload->fromMe ?? false);
-        $from = is_object($payload->from ?? null) ? ($payload->from->_serialized ?? '') : (string) ($payload->from ?? '');
-        $to = is_object($payload->to ?? null) ? ($payload->to->_serialized ?? '') : (string) ($payload->to ?? '');
-        $chatId = $fromMe ? $to : $from;
+        $messageId = $this->extractMessageId($this->readMessageValue($payload, 'id'));
+        $fromMe = $this->resolvePayloadFromMe($payload);
+        $from = $this->normalizeChatIdValue($this->readMessageValue($payload, 'from'));
+        $to = $this->normalizeChatIdValue($this->readMessageValue($payload, 'to'));
+        $remote = $this->extractPayloadRemoteId($payload);
+        $chatId = $this->resolvePayloadChatId($payload, $fromMe, $from, $to);
         $status = $fromMe ? 'Sent' : 'Received';
 
         if ($this->shouldSkipChatId($chatId)) {
@@ -187,6 +195,8 @@ class MessageDispatchService
                     'source' => 'webhook',
                     'from' => $from,
                     'to' => $to,
+                    'remote' => $remote,
+                    'canonicalChatId' => $chatId,
                     'type' => is_object($payload->type ?? null) ? null : ($payload->type ?? null),
                     'sortSequence' => (int) round(microtime(true) * 1000),
                 ],
@@ -269,7 +279,7 @@ class MessageDispatchService
             throw new \RuntimeException('chatId is required for WhatsApp message persistence');
         }
 
-        $fromMe = (bool) ($data['fromMe'] ?? false);
+        $fromMe = $this->normalizeBooleanFlag($data['fromMe'] ?? null) ?? false;
         $body = (string) ($data['body'] ?? '');
         $timestamp = $this->normalizeTimestampValue($data['timestamp'] ?? time());
         $messageId = $data['messageId'] ?? null;
@@ -378,6 +388,14 @@ class MessageDispatchService
     public function getStoredMessages(string $chatId, int $limit = 50): array
     {
         return $this->getStoredMessagesPage($chatId, $limit)['list'];
+    }
+
+    public function countStoredMessages(string $chatId): int
+    {
+        return $this->entityManager
+            ->getRepository('WhatsAppMessage')
+            ->where(['chatId' => $chatId])
+            ->count();
     }
 
     /**
@@ -605,6 +623,100 @@ class MessageDispatchService
         return $value ? (string) $value : null;
     }
 
+    private function normalizeBooleanFlag(mixed $value): ?bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return (int) $value === 1;
+        }
+
+        if (is_string($value)) {
+            $normalized = strtolower(trim($value));
+
+            if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+                return true;
+            }
+
+            if (in_array($normalized, ['0', 'false', 'no', 'off', ''], true)) {
+                return false;
+            }
+        }
+
+        return null;
+    }
+
+    private function resolvePayloadFromMe(array|object $payload): bool
+    {
+        $fromMe = $this->normalizeBooleanFlag($this->readMessageValue($payload, 'fromMe'));
+        $id = $this->readMessageValue($payload, 'id');
+
+        if (is_array($id) || is_object($id)) {
+            $idFromMe = $this->normalizeBooleanFlag($this->readMessageValue($id, 'fromMe'));
+
+            if ($idFromMe !== null) {
+                return $idFromMe;
+            }
+        }
+
+        $serialized = $this->extractMessageId($id) ?? '';
+
+        if (str_starts_with($serialized, 'true_')) {
+            return true;
+        }
+
+        if (str_starts_with($serialized, 'false_')) {
+            return false;
+        }
+
+        if ($fromMe !== null) {
+            return $fromMe;
+        }
+
+        return false;
+    }
+
+    private function extractPayloadRemoteId(array|object $payload): string
+    {
+        $id = $this->readMessageValue($payload, 'id');
+
+        if (!is_array($id) && !is_object($id)) {
+            return '';
+        }
+
+        return $this->normalizeChatIdValue($this->readMessageValue($id, 'remote'));
+    }
+
+    private function resolvePayloadChatId(array|object $payload, bool $fromMe, string $from, string $to): string
+    {
+        $remote = $this->extractPayloadRemoteId($payload);
+
+        if (!$fromMe) {
+            return $remote ?: ($from ?: $to);
+        }
+
+        if ($remote !== '' && !($from !== '' && $remote === $from && $to !== '' && $to !== $from)) {
+            return $remote;
+        }
+
+        return $to ?: ($remote ?: $from);
+    }
+
+    private function normalizeChatIdValue(mixed $value): string
+    {
+        if (is_array($value)) {
+            return (string) ($value['_serialized'] ?? $value['id'] ?? '');
+        }
+
+        if (is_object($value)) {
+            return (string) ($value->_serialized ?? $value->id ?? '');
+        }
+
+        return trim((string) ($value ?? ''));
+    }
+
     private function normalizeEntityForBroadcast(Entity $message): array
     {
         $fromMe = (bool) $message->get('fromMe');
@@ -644,7 +756,7 @@ class MessageDispatchService
             return null;
         }
 
-        $fromMe = (bool) ($apiMessage['fromMe'] ?? false);
+        $fromMe = $this->resolvePayloadFromMe($apiMessage);
         $timestamp = $this->normalizeTimestampValue($apiMessage['timestamp'] ?? time());
         $sortSequence = $this->buildHistorySortSequence($timestamp, $index);
         $payloadMeta = [
@@ -653,6 +765,9 @@ class MessageDispatchService
             'sortSequence' => $sortSequence,
             'author' => $apiMessage['author'] ?? null,
             'from' => $apiMessage['from'] ?? null,
+            'to' => $apiMessage['to'] ?? null,
+            'remote' => $this->extractPayloadRemoteId($apiMessage),
+            'canonicalChatId' => $chatId,
         ];
 
         return [
@@ -713,9 +828,11 @@ class MessageDispatchService
         }
 
         $reactionValue = trim((string) $this->readMessageValue($reaction, 'reaction', ''));
-        $senderId = $this->extractMessageId($this->readMessageValue($reaction, 'senderId'));
+        $fromMe = $this->normalizeBooleanFlag($this->readMessageValue($reaction, 'fromMe')) ?? false;
+        $senderId = $this->extractReactionSenderId($reaction);
         $reactionId = $this->extractMessageId($this->readMessageValue($reaction, 'id'));
-        $key = $senderId ?: ($reactionId ?: uniqid('reaction_', true));
+        $isLocalReaction = $fromMe || $this->isLocalReactionId($reactionId);
+        $key = $isLocalReaction ? self::LOCAL_REACTION_SENDER : ($senderId ?: ($reactionId ?: uniqid('reaction_', true)));
 
         if ($reactionValue === '') {
             unset($reactions[$key]);
@@ -725,10 +842,10 @@ class MessageDispatchService
 
         $reactions[$key] = [
             'id' => $reactionId,
-            'senderId' => $senderId,
+            'senderId' => $isLocalReaction ? self::LOCAL_REACTION_SENDER : $senderId,
             'reaction' => $reactionValue,
             'timestamp' => $this->normalizeTimestampValue($this->readMessageValue($reaction, 'timestamp', time())),
-            'fromMe' => (bool) $this->readMessageValue($reaction, 'fromMe', false),
+            'fromMe' => $isLocalReaction,
         ];
 
         return array_values($reactions);
@@ -753,12 +870,16 @@ class MessageDispatchService
                 continue;
             }
 
+            $reactionId = $this->extractMessageId($this->readMessageValue($reaction, 'id'));
+            $fromMe = ($this->normalizeBooleanFlag($this->readMessageValue($reaction, 'fromMe')) ?? false) ||
+                $this->isLocalReactionId($reactionId);
+
             $normalized[] = [
-                'id' => $this->extractMessageId($this->readMessageValue($reaction, 'id')),
-                'senderId' => $this->extractMessageId($this->readMessageValue($reaction, 'senderId')),
+                'id' => $reactionId,
+                'senderId' => $fromMe ? self::LOCAL_REACTION_SENDER : $this->extractReactionSenderId($reaction),
                 'reaction' => $reactionValue,
                 'timestamp' => $this->normalizeTimestampValue($this->readMessageValue($reaction, 'timestamp', time())),
-                'fromMe' => (bool) $this->readMessageValue($reaction, 'fromMe', false),
+                'fromMe' => $fromMe,
             ];
         }
 
@@ -767,7 +888,41 @@ class MessageDispatchService
 
     private function buildReactionKey(array $reaction): string
     {
+        if (($reaction['fromMe'] ?? false) === true || $this->isLocalReactionId($reaction['id'] ?? null)) {
+            return self::LOCAL_REACTION_SENDER;
+        }
+
         return (string) ($reaction['senderId'] ?: ($reaction['id'] ?: ''));
+    }
+
+    private function extractReactionSenderId(array|object $reaction): ?string
+    {
+        foreach (['senderId', 'author', 'participant', 'from'] as $key) {
+            $senderId = $this->extractMessageId($this->readMessageValue($reaction, $key));
+
+            if ($senderId) {
+                return $senderId;
+            }
+        }
+
+        $id = $this->readMessageValue($reaction, 'id');
+
+        if (is_array($id) || is_object($id)) {
+            foreach (['participant', 'author', 'from'] as $key) {
+                $senderId = $this->extractMessageId($this->readMessageValue($id, $key));
+
+                if ($senderId) {
+                    return $senderId;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private function isLocalReactionId(?string $reactionId): bool
+    {
+        return $reactionId !== null && str_starts_with($reactionId, 'true_');
     }
 
     private function extractComparableSortSequence(array $message): ?int

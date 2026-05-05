@@ -234,6 +234,12 @@ class ChatListSnapshotService
         $id = $this->normalizeId($this->readValue($chat, 'id'));
         $lastMessage = $this->readValue($chat, 'lastMessage');
         $contact = $this->readValue($chat, 'contact');
+        $normalizedLastMessage = $lastMessage ? $this->normalizeLastMessage($lastMessage, $id) : null;
+        $unreadCount = (int) $this->readValue($chat, 'unreadCount', 0);
+
+        if (($normalizedLastMessage['fromMe'] ?? false) === true) {
+            $unreadCount = 0;
+        }
 
         return [
             'id' => $id,
@@ -251,12 +257,12 @@ class ChatListSnapshotService
             'isLocked' => (bool) $this->readValue($chat, 'isLocked', false),
             'isMuted' => (bool) $this->readValue($chat, 'isMuted', false),
             'muteExpiration' => (int) $this->readValue($chat, 'muteExpiration', 0),
-            'unreadCount' => (int) $this->readValue($chat, 'unreadCount', 0),
+            'unreadCount' => $unreadCount,
             'timestamp' => $this->normalizeTimestamp($this->readValue($chat, 'timestamp')),
             'archived' => (bool) $this->readValue($chat, 'archived', false),
             'pinned' => (bool) $this->readValue($chat, 'pinned', false),
             'contact' => $contact ? $this->normalizeContact($contact, $id) : null,
-            'lastMessage' => $lastMessage ? $this->normalizeLastMessage($lastMessage, $id) : null,
+            'lastMessage' => $normalizedLastMessage,
         ];
     }
 
@@ -294,7 +300,7 @@ class ChatListSnapshotService
             'caption' => $this->readString($message, 'caption'),
             'type' => $this->readString($message, 'type') ?: 'chat',
             'timestamp' => $timestamp,
-            'fromMe' => (bool) $this->readValue($message, 'fromMe', false),
+            'fromMe' => $this->resolveMessageFromMe($message),
             'ack' => (int) $this->readValue($message, 'ack', 0),
             'hasMedia' => (bool) $this->readValue($message, 'hasMedia', false),
             'author' => $this->normalizeId($this->readValue($message, 'author')),
@@ -307,6 +313,56 @@ class ChatListSnapshotService
                     ?: '[' . ($this->readString($message, 'type') ?: 'Message') . ']'
             ),
         ];
+    }
+
+    private function resolveMessageFromMe(array|object $message): bool
+    {
+        $id = $this->readValue($message, 'id');
+
+        if (is_array($id) || is_object($id)) {
+            $idFromMe = $this->normalizeBooleanFlag($this->readValue($id, 'fromMe'));
+
+            if ($idFromMe !== null) {
+                return $idFromMe;
+            }
+        }
+
+        $messageId = $this->normalizeId($id);
+
+        if (str_starts_with($messageId, 'true_')) {
+            return true;
+        }
+
+        if (str_starts_with($messageId, 'false_')) {
+            return false;
+        }
+
+        return $this->normalizeBooleanFlag($this->readValue($message, 'fromMe')) ?? false;
+    }
+
+    private function normalizeBooleanFlag(mixed $value): ?bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_int($value) || is_float($value)) {
+            return (int) $value === 1;
+        }
+
+        if (is_string($value)) {
+            $normalized = strtolower(trim($value));
+
+            if (in_array($normalized, ['1', 'true', 'yes', 'on'], true)) {
+                return true;
+            }
+
+            if (in_array($normalized, ['0', 'false', 'no', 'off', ''], true)) {
+                return false;
+            }
+        }
+
+        return null;
     }
 
     private function readValue(array|object|null $value, string $key, mixed $default = null): mixed

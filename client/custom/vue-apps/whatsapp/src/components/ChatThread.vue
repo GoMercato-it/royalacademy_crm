@@ -19,13 +19,17 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  messageError: {
+    type: [String, Object],
+    default: null,
+  },
   targetMessageId: {
     type: String,
     default: '',
   },
 });
 
-const emit = defineEmits(['load-more', 'retry-message', 'message-action']);
+const emit = defineEmits(['load-more', 'retry-load', 'retry-message', 'message-action']);
 const listRef = ref(null);
 const openMenuId = ref(null);
 const emojiPickerMessageId = ref(null);
@@ -49,9 +53,21 @@ const EMOJI_REACTION_CHOICES = [
   '🔥', '✨', '🎉', '🥳', '💯', '✅', '⭐', '🌟', '🚀', '👀',
   '☕', '🍕', '🍾', '🎁', '🏆', '📌', '💡', '🫡', '🤔', '🤗',
 ];
+const LOCAL_REACTION_SENDER = '__crm_user__';
 
 const title = computed(() => props.activeChatName || (isLidChatId(props.activeChatId) ? 'WhatsApp contact' : formatChatId(props.activeChatId)));
 const subtitle = computed(() => formatChatId(props.activeChatId));
+const loadErrorMessage = computed(() => {
+  if (!props.messageError) {
+    return '';
+  }
+
+  if (typeof props.messageError === 'string') {
+    return props.messageError;
+  }
+
+  return props.messageError.message || 'Unable to load messages from WhatsApp Web.';
+});
 
 const orderedMessages = computed(() => props.messages
   .slice()
@@ -345,15 +361,80 @@ function getMessageBody(message) {
 function getReactions(message) {
   if (!message) return {};
   const meta = message.payloadMeta || {};
-  if (meta.reactions && Array.isArray(meta.reactions)) {
-    return meta.reactions.reduce((acc, r) => {
-      if (r.reaction) {
-        acc[r.reaction] = (acc[r.reaction] || 0) + 1;
-      }
-      return acc;
-    }, {});
+
+  if (!Array.isArray(meta.reactions)) {
+    return {};
   }
-  return {};
+
+  const reactionsBySender = new Map();
+
+  meta.reactions.forEach((reaction, index) => {
+    const emoji = reaction?.reaction;
+
+    if (!emoji) {
+      return;
+    }
+
+    reactionsBySender.set(getReactionSenderKey(reaction, index), emoji);
+  });
+
+  return Array.from(reactionsBySender.values()).reduce((acc, emoji) => {
+    acc[emoji] = (acc[emoji] || 0) + 1;
+
+    return acc;
+  }, {});
+}
+
+function getReactionSenderKey(reaction, index) {
+  if (isCurrentUserReaction(reaction)) {
+    return LOCAL_REACTION_SENDER;
+  }
+
+  return String(
+    reaction?.senderId ||
+    reaction?.author ||
+    reaction?.participant ||
+    reaction?.from ||
+    readReactionIdValue(reaction?.id, 'participant') ||
+    readReactionIdValue(reaction?.id, 'author') ||
+    readReactionIdValue(reaction?.id, 'from') ||
+    readReactionIdValue(reaction?.id, '_serialized') ||
+    readReactionIdValue(reaction?.id, 'id') ||
+    `reaction-${index}`
+  );
+}
+
+function isCurrentUserReaction(reaction) {
+  return !!(
+    reaction &&
+    typeof reaction === 'object' &&
+    (
+      reaction.senderId === LOCAL_REACTION_SENDER ||
+      isTruthyFlag(reaction.fromMe) ||
+      isTruthyFlag(reaction.optimistic) ||
+      isLocalReactionId(reaction.id)
+    )
+  );
+}
+
+function isLocalReactionId(id) {
+  const value = typeof id === 'string' ?
+    id :
+    readReactionIdValue(id, '_serialized') || readReactionIdValue(id, 'id');
+
+  return String(value || '').startsWith('true_');
+}
+
+function isTruthyFlag(value) {
+  return value === true || value === 1 || value === '1' || value === 'true';
+}
+
+function readReactionIdValue(value, key) {
+  if (!value || typeof value !== 'object') {
+    return '';
+  }
+
+  return value[key] || '';
 }
 
 function hasReactions(message) {
@@ -683,9 +764,17 @@ function isLidChatId(chatId) {
         </div>
       </div>
 
+      <div v-else-if="loadErrorMessage && !orderedMessages.length" class="wa-thread-empty is-compact is-error">
+        <span class="fas fa-triangle-exclamation"></span>
+        <p>{{ loadErrorMessage }}</p>
+        <button type="button" class="btn btn-default btn-sm" @click="emit('retry-load')">
+          Retry
+        </button>
+      </div>
+
       <div v-else-if="!orderedMessages.length" class="wa-thread-empty is-compact">
         <span class="fas fa-comment-slash"></span>
-        <p>No stored messages yet.</p>
+        <p>No messages available from WhatsApp Web yet.</p>
       </div>
 
       <div v-else class="wa-message-groups">
@@ -703,9 +792,9 @@ function isLidChatId(chatId) {
               v-memo="[activeChatId, item.renderKey, openMenuId === item.id, emojiPickerMessageId === item.id, expandedEmojiPickerMessageId === item.id, editingMessageId === item.id, deletingMessageId === item.id]"
               :data-message-id="item.id"
               class="wa-message-row"
-              :class="{ 'is-outgoing': item.message.fromMe, 'is-target': item.target }"
+              :class="{ 'is-outgoing': item.message.fromMe, 'is-target': item.target, 'is-picker-open': emojiPickerMessageId === item.id }"
             >
-              <div class="wa-message-bubble" :class="{ 'is-pending': item.message.pending, 'is-failed': item.message.failed }">
+              <div class="wa-message-bubble" :class="{ 'is-pending': item.message.pending, 'is-failed': item.message.failed, 'is-picker-open': emojiPickerMessageId === item.id }">
                 <!-- Inline edit mode -->
                 <div v-if="editingMessageId === item.id" class="wa-inline-edit">
                   <textarea

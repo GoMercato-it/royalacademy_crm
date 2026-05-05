@@ -269,6 +269,10 @@ function loadMoreMessages() {
   whatsappStore.loadMoreMessages().catch(() => {});
 }
 
+function retryLoadMessages() {
+  whatsappStore.refreshActiveMessages().catch(() => {});
+}
+
 function handleMessageAction({ action, message, reaction, editedText, everyone }) {
   if (action === 'react') {
     const emoji = reaction !== undefined ? reaction : '';
@@ -872,8 +876,10 @@ function clearToastTimer() {
           :active-chat-name="whatsappStore.activeChatName"
           :messages="whatsappStore.activeMessages"
           :loading="whatsappStore.loadingMessages"
+          :message-error="whatsappStore.lastMessageLoadError"
           :target-message-id="targetMessageId"
           @load-more="loadMoreMessages"
+          @retry-load="retryLoadMessages"
           @retry-message="retryMessage"
           @message-action="handleMessageAction"
         />

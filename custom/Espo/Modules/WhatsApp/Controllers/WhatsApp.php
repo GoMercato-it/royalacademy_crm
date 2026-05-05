@@ -26,6 +26,7 @@ class WhatsApp
     private const CHAT_LIST_MAX_LIMIT = 100;
     private const MESSAGE_LIST_DEFAULT_LIMIT = 50;
     private const MESSAGE_LIST_MAX_LIMIT = 1000;
+    private const MESSAGE_LIVE_MAX_LIMIT = 200;
 
     public function __construct(
         private WhatsAppClient $whatsAppClient,
@@ -154,29 +155,88 @@ class WhatsApp
             throw new BadRequest('chatId is required');
         }
 
-        $page = $this->messageDispatchService->getStoredMessagesPage(
-            $chatId,
-            $this->readIntQueryParam(
-                $request,
-                'limit',
-                self::MESSAGE_LIST_DEFAULT_LIMIT,
-                1,
-                self::MESSAGE_LIST_MAX_LIMIT
-            ),
-            $this->readIntQueryParam($request, 'offset', 0, 0, PHP_INT_MAX),
-            $this->readOptionalTimestampQueryParam($request, 'before')
-                ?? $this->readOptionalTimestampQueryParam($request, 'cursor')
+        $source = strtolower(trim((string) ($request->getQueryParam('source') ?? 'web')));
+        $limit = $this->readIntQueryParam(
+            $request,
+            'limit',
+            self::MESSAGE_LIST_DEFAULT_LIMIT,
+            1,
+            $source === 'stored' ? self::MESSAGE_LIST_MAX_LIMIT : self::MESSAGE_LIVE_MAX_LIMIT
         );
+        $offset = $this->readIntQueryParam($request, 'offset', 0, 0, PHP_INT_MAX);
+        $cursor = $this->readOptionalTimestampQueryParam($request, 'before')
+            ?? $this->readOptionalTimestampQueryParam($request, 'cursor');
+
+        if ($source === 'stored') {
+            $page = $this->messageDispatchService->getStoredMessagesPage(
+                $chatId,
+                $limit,
+                $offset,
+                $cursor
+            );
+
+            return [
+                'success' => true,
+                'list' => $page['list'],
+                'total' => $page['total'],
+                'limit' => $page['limit'],
+                'offset' => $page['offset'],
+                'hasMore' => $page['hasMore'],
+                'nextOffset' => $page['nextOffset'],
+                'nextCursor' => $page['nextCursor'],
+                'source' => 'stored',
+                'liveCount' => null,
+                'storedTotal' => $page['total'],
+            ];
+        }
+
+        try {
+            $apiMessages = $this->whatsAppClient->getChatMessages($chatId, $limit);
+            $this->messageDispatchService->ingestApiMessages($chatId, $apiMessages);
+            $list = $this->messageDispatchService->getLiveMessages($chatId, $apiMessages);
+            $storedTotal = $this->messageDispatchService->countStoredMessages($chatId);
+        } catch (\Throwable $e) {
+            $this->log->warning('WhatsApp live message fetch failed: ' . $e->getMessage(), [
+                'chatId' => $chatId,
+            ]);
+
+            return [
+                'success' => false,
+                'error' => 'WA_WEB_FETCH_FAILED',
+                'message' => 'Unable to fetch messages from WhatsApp Web.',
+                'list' => [],
+                'total' => 0,
+                'limit' => $limit,
+                'offset' => $offset,
+                'hasMore' => false,
+                'nextOffset' => null,
+                'nextCursor' => null,
+                'source' => 'web',
+                'liveCount' => 0,
+                'storedTotal' => $this->messageDispatchService->countStoredMessages($chatId),
+            ];
+        }
+
+        $liveCount = count($list);
+        $nextCursor = null;
+
+        if ($liveCount >= $limit && $list !== []) {
+            $oldestTimestamp = (int) ($list[0]['timestamp'] ?? 0);
+            $nextCursor = $oldestTimestamp > 0 ? $oldestTimestamp : null;
+        }
 
         return [
             'success' => true,
-            'list' => $page['list'],
-            'total' => $page['total'],
-            'limit' => $page['limit'],
-            'offset' => $page['offset'],
-            'hasMore' => $page['hasMore'],
-            'nextOffset' => $page['nextOffset'],
-            'nextCursor' => $page['nextCursor'],
+            'list' => $list,
+            'total' => $liveCount,
+            'limit' => $limit,
+            'offset' => $offset,
+            'hasMore' => $liveCount >= $limit,
+            'nextOffset' => null,
+            'nextCursor' => $nextCursor,
+            'source' => 'web',
+            'liveCount' => $liveCount,
+            'storedTotal' => $storedTotal,
         ];
     }
 

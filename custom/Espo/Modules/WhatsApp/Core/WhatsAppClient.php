@@ -640,6 +640,13 @@ class WhatsAppClient
         }
 
         $response = $this->makeRequest('POST', "/chat/fetchMessages/{$this->sessionId}", $payload);
+
+        if (($response['success'] ?? true) === false) {
+            $message = $response['error'] ?? ('WhatsApp Web fetchMessages failed with code ' . ($response['code'] ?? 'unknown'));
+
+            throw new \RuntimeException((string) $message);
+        }
+
         $messages = $response['messages'] ?? $response['data'] ?? [];
 
         return is_array($messages) ? $messages : [];

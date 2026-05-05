@@ -506,7 +506,12 @@ body.wa-whatsapp-fixed #main,body.wa-whatsapp-fixed #main .content,body.wa-whats
 .wa-message-row {
   justify-content:flex-start;
   margin:0 0 10px;
-  display:flex}
+  display:flex;
+  position:relative;
+  z-index:0}
+
+.wa-message-row.is-picker-open {
+  z-index:60}
 
 .wa-message-row.is-target .wa-message-bubble {
   outline:2px solid var(--wa-link-color);
@@ -653,7 +658,7 @@ body.wa-whatsapp-fixed #main,body.wa-whatsapp-fixed #main .content,body.wa-whats
   font-size:13px}
 
 .wa-emoji-picker {
-  z-index:20;
+  z-index:70;
   border:1px solid var(--wa-panel-border);
   background:var(--wa-panel-surface);
   border-radius:22px;
@@ -871,6 +876,9 @@ body.wa-whatsapp-fixed #main,body.wa-whatsapp-fixed #main .content,body.wa-whats
 
 .wa-thread-empty.is-compact {
   min-height:180px}
+
+.wa-thread-empty.is-error {
+  color:var(--wa-danger-text)}
 
 .wa-message-skeleton {
   background:linear-gradient(90deg, var(--wa-skeleton-a), var(--wa-skeleton-b), var(--wa-skeleton-a));
@@ -1460,6 +1468,11 @@ to {
   display: flex;
   gap: 2px;
   z-index: 10;
+}
+
+.wa-message-bubble.is-picker-open .wa-message-reactions {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .wa-message-row:not(.is-outgoing) .wa-message-reactions {

@@ -15,7 +15,7 @@ define('custom:views/whatsapp/main-vue-container', ['view'], function (View) {
 
         setup() {
             this.vueApp = null;
-            this.vueAssetVersion = '2026.05.02.07';
+            this.vueAssetVersion = '2026.05.04.04';
         }
 
         afterRender() {
