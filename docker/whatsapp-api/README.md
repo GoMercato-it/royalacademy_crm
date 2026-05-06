@@ -14,9 +14,11 @@ Why this exists:
 - `avoylenko/wwebjs-api` still calls `loadEarlierMsgs(chat)` in its custom `fetchMessages` override.
 - `whatsapp-web.js` main already contains the profile picture compatibility fix, so the old DDEV startup patch is no longer needed.
 - The CRM webhook route is `noAuth`; using `x-api-key` on bridge-to-CRM callbacks makes Espo treat the callback as a failed API-auth attempt. The image rewrites that callback header to `x-whatsapp-api-key`.
-- Runtime config should keep only message-bearing callbacks enabled. Startup/status/reaction/ack callbacks are noisy during first sync and are not consumed by the CRM.
+- Runtime config should keep only message-bearing callbacks enabled. Startup/status/ack callbacks are noisy during first sync and are not consumed by the CRM.
+- `message_reaction` stays enabled for fresh realtime reactions, but the compatibility patch drops stale reaction replay events older than `REACTION_WEBHOOK_MAX_AGE_SECONDS` because WhatsApp Web can emit large historical reaction bursts after reconnect.
 
 Removal criteria:
 
 - Remove the `loadEarlierMsgs` part of `patch-whatsapp-api-compat.js` once `avoylenko/wwebjs-api` releases a version that calls `loadEarlierMsgs({ chat })` in `src/utils.js`.
 - Keep the webhook header isolation unless the CRM endpoint is changed to intentionally authenticate bridge callbacks with a non-Espo auth header.
+- Remove the stale reaction replay guard only when the bridge exposes first-sync-safe event replay controls or the CRM moves reaction sync to an explicit pull-based endpoint.

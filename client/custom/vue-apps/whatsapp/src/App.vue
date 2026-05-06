@@ -9,6 +9,8 @@ import { useWhatsAppStore } from './stores/whatsapp';
 import { useWebSocketStore } from './stores/websocket';
 
 const ContextPanel = defineAsyncComponent(() => import('./components/ContextPanel.vue'));
+const QR_STATUS_POLL_INTERVAL_MS = 2000;
+const QR_STATUS_POLL_MAX_MS = 120000;
 
 const props = defineProps({
   espoContext: {
@@ -30,10 +32,30 @@ let resizeObserver = null;
 let toastTimer = null;
 let qrScriptPromise = null;
 let renderedQrValue = '';
+let connectedWorkspacePromise = null;
+let qrStatusPollTimer = null;
+let qrStatusPollStartedAt = 0;
+let qrStatusPollInFlight = false;
+let backgroundGroupsPromise = null;
 
 const currentError = computed(() => whatsappStore.lastError || websocketStore.lastError || null);
 const showOfflineBanner = computed(() => whatsappStore.queuedCount > 0 || (whatsappStore.status !== 'unknown' && !whatsappStore.isConnected));
-const showQrPanel = computed(() => !whatsappStore.isConnected && (whatsappStore.loadingQr || !!whatsappStore.qrCode));
+const showQrPanel = computed(() => {
+  if (whatsappStore.isConnected) {
+    return false;
+  }
+
+  const status = String(whatsappStore.status || '').toLowerCase();
+  const needsPairing = [
+    'unpaired',
+    'disconnected',
+    'unauthenticated',
+    'not_logged_in',
+    'qr_ready',
+  ].includes(status);
+
+  return whatsappStore.loadingQr || !!whatsappStore.qrCode || needsPairing;
+});
 const offlineBannerText = computed(() => {
   const count = whatsappStore.queuedCount;
 
@@ -63,6 +85,28 @@ watch([() => whatsappStore.qrCode, showQrPanel], ([qrCode, visible]) => {
   clearRenderedQrCode();
 });
 
+watch(showQrPanel, visible => {
+  if (visible && !whatsappStore.isConnected) {
+    startQrStatusPolling();
+    return;
+  }
+
+  stopQrStatusPolling();
+});
+
+watch(() => whatsappStore.isConnected, (isConnected, wasConnected) => {
+  if (!isConnected || wasConnected) {
+    return;
+  }
+
+  stopQrStatusPolling();
+  replaceQrRouteWithWorkspace();
+
+  loadConnectedWorkspace().catch(error => {
+    showToast(error.message || 'Unable to load WhatsApp chats.');
+  });
+});
+
 onMounted(() => {
   document.body.classList.add('wa-whatsapp-fixed');
   updateViewportHeight();
@@ -89,6 +133,7 @@ onBeforeUnmount(() => {
   }
 
   clearToastTimer();
+  stopQrStatusPolling();
   websocketStore.disconnect();
 });
 
@@ -96,20 +141,116 @@ async function bootstrap() {
   await whatsappStore.loadStatus().catch(() => null);
   await websocketStore.connect().catch(() => null);
 
-  const [chats, groups] = await Promise.all([
-    whatsappStore.loadChats({ forceRefresh: true }).catch(() => []),
-    whatsappStore.loadGroups({ forceRefresh: true }).catch(() => []),
-  ]);
-  const initialList = whatsappStore.chatList.length ? whatsappStore.chatList : [...chats, ...groups];
+  if (!whatsappStore.isConnected) {
+    return;
+  }
+
+  return loadConnectedWorkspace();
+}
+
+async function loadConnectedWorkspace() {
+  if (connectedWorkspacePromise) {
+    return connectedWorkspacePromise;
+  }
+
+  connectedWorkspacePromise = doLoadConnectedWorkspace()
+    .finally(() => {
+      connectedWorkspacePromise = null;
+    });
+
+  return connectedWorkspacePromise;
+}
+
+async function doLoadConnectedWorkspace() {
+  const chats = await whatsappStore.loadChats({ forceRefresh: false });
+
+  const initialList = whatsappStore.chatList.length ? whatsappStore.chatList : chats;
   const initialChat = resolveInitialChatTarget(initialList);
 
   if (initialChat) {
     await openChat(initialChat);
+    loadGroupsInBackground();
     return;
   }
 
   if (!whatsappStore.activeChatId && initialList.length) {
     await openChat(initialList[0]);
+    loadGroupsInBackground();
+    return;
+  }
+
+  const groups = await whatsappStore.loadGroups({ forceRefresh: false, silent: true }).catch(() => []);
+  const groupList = whatsappStore.chatList.length ? whatsappStore.chatList : groups;
+
+  if (!whatsappStore.activeChatId && groupList.length) {
+    await openChat(groupList[0]);
+  }
+}
+
+function loadGroupsInBackground() {
+  if (backgroundGroupsPromise) {
+    return backgroundGroupsPromise;
+  }
+
+  backgroundGroupsPromise = whatsappStore.loadGroups({
+    forceRefresh: false,
+    silent: true,
+  })
+    .catch(() => [])
+    .finally(() => {
+      backgroundGroupsPromise = null;
+    });
+
+  return backgroundGroupsPromise;
+}
+
+function startQrStatusPolling() {
+  if (qrStatusPollTimer || whatsappStore.isConnected) {
+    return;
+  }
+
+  qrStatusPollStartedAt = Date.now();
+  pollQrStatus();
+  qrStatusPollTimer = window.setInterval(pollQrStatus, QR_STATUS_POLL_INTERVAL_MS);
+}
+
+function stopQrStatusPolling() {
+  if (qrStatusPollTimer) {
+    window.clearInterval(qrStatusPollTimer);
+    qrStatusPollTimer = null;
+  }
+
+  qrStatusPollInFlight = false;
+}
+
+async function pollQrStatus() {
+  if (qrStatusPollInFlight) {
+    return;
+  }
+
+  const elapsed = Date.now() - qrStatusPollStartedAt;
+
+  if (whatsappStore.isConnected || !showQrPanel.value || elapsed > QR_STATUS_POLL_MAX_MS) {
+    stopQrStatusPolling();
+    return;
+  }
+
+  qrStatusPollInFlight = true;
+
+  try {
+    await whatsappStore.loadStatus({ silent: true });
+  } catch (error) {
+    // QR status polling is opportunistic; the visible retry/status UI handles hard failures.
+  } finally {
+    qrStatusPollInFlight = false;
+
+    if (
+      whatsappStore.isConnected ||
+      !showQrPanel.value ||
+      Date.now() - qrStatusPollStartedAt > QR_STATUS_POLL_MAX_MS
+    ) {
+      stopQrStatusPolling();
+    }
   }
 }
 
@@ -627,6 +768,21 @@ function updateQrRoute() {
   }
 
   window.location.hash = '#WhatsApp?screen=qr';
+}
+
+function replaceQrRouteWithWorkspace() {
+  if (!String(window.location.hash || '').startsWith('#WhatsApp?screen=qr')) {
+    return;
+  }
+
+  const router = props.espoContext && props.espoContext.router;
+
+  if (router && typeof router.navigate === 'function') {
+    router.navigate('#WhatsApp', { trigger: false });
+    return;
+  }
+
+  window.history.replaceState(null, document.title, `${window.location.pathname}${window.location.search}#WhatsApp`);
 }
 
 function renderQrCode(qrCode) {

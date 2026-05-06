@@ -19,6 +19,10 @@
 # Implementation plans from other AI models
 /impls
 
+# Local agent instructions
+/AGENTS.md
+/.agents/
+
 # Test files
 test_*.php
 test_*.json

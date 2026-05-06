@@ -16,9 +16,12 @@ services:
       # Internal-only webhook contract: the bridge must call the CRM
       # through the internal Docker service address, not the public domain.
       - BASE_WEBHOOK_URL=http://web/api/v1/WhatsApp/action/webhook
-      # Keep the bridge focused on chat messages and reactions. The CRM does
-      # not consume these noisy startup/history callbacks, and they slow down first sync.
+      # Keep the bridge focused on chat messages and fresh reactions. The CRM
+      # does not consume noisy startup/history callbacks, and they slow down first sync.
       - DISABLED_CALLBACKS=auth_failure|authenticated|change_state|disconnected|loading_screen|qr|ready|call|group_join|group_leave|group_admin_changed|group_membership_request|group_update|media_uploaded|media|message_ack|message_edit|message_ciphertext|message_revoke_everyone|message_revoke_me|contact_changed|chat_removed|chat_archived|unread_count|vote_update|code
+      # whatsapp-web.js can replay historical reactions after reconnect. Keep
+      # realtime reactions, but do not flood CRM with stale reaction callbacks.
+      - REACTION_WEBHOOK_MAX_AGE_SECONDS=300
       - MAX_ATTACHMENT_SIZE=10000000
       - ENABLE_LOCAL_CALLBACK_EXAMPLE=FALSE
       - VIRTUAL_HOST=$DDEV_HOSTNAME

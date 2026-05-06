@@ -127,6 +127,10 @@ export class EspoApiClient {
     return this.get('WhatsApp/action/login');
   }
 
+  getQrCode() {
+    return this.get('WhatsApp/action/qrCode');
+  }
+
   logout() {
     return this.post('WhatsApp/action/logout');
   }
@@ -176,6 +180,8 @@ export class EspoApiClient {
     return this.get('WhatsApp/action/getChatMessages', {
       chatId,
       limit,
+    }, {
+      retries: 0,
     });
   }
 

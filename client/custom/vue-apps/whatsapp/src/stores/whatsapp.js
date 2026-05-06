@@ -10,6 +10,12 @@ const AVATAR_CACHE_KEY = 'wa-vue-avatar-cache-v1';
 const AVATAR_CACHE_TTL = 7 * 24 * 60 * 60 * 1000;
 const OUTBOX_CACHE_KEY = 'wa-vue-outbox-v1';
 const OUTBOX_MAX = 100;
+const OUTBOX_RETRY_BACKOFF_MS = 30000;
+const QR_POLL_ATTEMPTS = 8;
+const QR_POLL_INTERVAL_MS = 750;
+const MESSAGE_INITIAL_LIMIT = 25;
+const MESSAGE_LOAD_STEP = 25;
+const MESSAGE_LIVE_MAX_LIMIT = 200;
 const LOCAL_REACTION_SENDER = '__crm_user__';
 const OUTGOING_ECHO_WINDOW_SECONDS = 180;
 
@@ -127,6 +133,26 @@ function writeOutbox(list) {
   } catch (error) {}
 }
 
+function createSendKey(chatId, body, queuedId = '') {
+  return [
+    String(chatId || '').trim(),
+    String(body || '').trim(),
+    queuedId ? String(queuedId) : 'direct',
+  ].join('::');
+}
+
+function isQueuedRetryBlocked(item, now = Date.now()) {
+  const nextAttemptAt = Number(item && item.nextAttemptAt ? item.nextAttemptAt : 0);
+
+  return nextAttemptAt > now;
+}
+
+function wait(ms) {
+  return new Promise(resolve => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 clearLegacyChatCaches();
 
 export const useWhatsAppStore = defineStore('whatsapp', () => {
@@ -158,6 +184,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
   const queuedMessages = ref(readOutbox());
   const avatarRequests = new Map();
   const conversationPreviewRequests = new Map();
+  const inFlightSends = new Map();
   let flushingQueue = false;
   let messageLoadRequestId = 0;
 
@@ -252,9 +279,11 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     return api.value;
   }
 
-  async function loadStatus() {
-    loadingStatus.value = true;
-    lastError.value = null;
+  async function loadStatus({ silent = false } = {}) {
+    if (!silent) {
+      loadingStatus.value = true;
+      lastError.value = null;
+    }
 
     try {
       const response = await ensureApi().getStatus();
@@ -262,15 +291,21 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       isConnected.value = !!response.isConnected;
 
       if (isConnected.value) {
+        qrCode.value = '';
         flushQueuedMessages().catch(() => {});
       }
 
       return response;
     } catch (error) {
-      lastError.value = error;
+      if (!silent) {
+        lastError.value = error;
+      }
+
       throw error;
     } finally {
-      loadingStatus.value = false;
+      if (!silent) {
+        loadingStatus.value = false;
+      }
     }
   }
 
@@ -281,10 +316,17 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     try {
       const response = await ensureApi().login();
 
-      qrCode.value = response.qrCode || '';
+      qrCode.value = response.qrCode || response.qr || '';
+
+      if (!qrCode.value) {
+        qrCode.value = await pollQrCode();
+      }
 
       if (qrCode.value) {
         status.value = 'qr_ready';
+        isConnected.value = false;
+      } else {
+        status.value = 'unpaired';
         isConnected.value = false;
       }
 
@@ -295,6 +337,21 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     } finally {
       loadingQr.value = false;
     }
+  }
+
+  async function pollQrCode() {
+    for (let attempt = 0; attempt < QR_POLL_ATTEMPTS; attempt++) {
+      await wait(QR_POLL_INTERVAL_MS);
+
+      const response = await ensureApi().getQrCode();
+      const qr = response && (response.qrCode || response.qr) ? response.qrCode || response.qr : '';
+
+      if (qr) {
+        return qr;
+      }
+    }
+
+    return '';
   }
 
   async function logout() {
@@ -336,7 +393,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return;
     }
 
-    messagesByChat.value[chatId] = Array.isArray(list) ? list : [];
+    messagesByChat.value[chatId] = sortMessagesForThread(Array.isArray(list) ? list : []);
   }
 
   function removeMessageFromChat(chatId, messageId) {
@@ -389,13 +446,16 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
   }
 
-  async function loadGroups({ forceRefresh = false } = {}) {
+  async function loadGroups({ forceRefresh = false, silent = false } = {}) {
     if (loadingGroups.value) {
       return groups.value;
     }
 
     loadingGroups.value = true;
-    lastError.value = null;
+
+    if (!silent) {
+      lastError.value = null;
+    }
 
     try {
       const response = await ensureApi().getGroups({ forceRefresh });
@@ -405,7 +465,10 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
       return list;
     } catch (error) {
-      lastError.value = error;
+      if (!silent) {
+        lastError.value = error;
+      }
+
       throw error;
     } finally {
       loadingGroups.value = false;
@@ -414,7 +477,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
   async function openChat(chat, options = {}) {
     const chatId = getChatId(chat);
-    const limit = options.limit || 50;
+    const limit = options.limit || MESSAGE_INITIAL_LIMIT;
     const previousChatId = activeChatId.value;
 
     if (!chatId) {
@@ -483,8 +546,8 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return [];
     }
 
-    const currentLimit = messageLimitByChat.value[chatId] || 50;
-    const nextLimit = Math.min(currentLimit + 50, 200);
+    const currentLimit = messageLimitByChat.value[chatId] || MESSAGE_INITIAL_LIMIT;
+    const nextLimit = Math.min(currentLimit + MESSAGE_LOAD_STEP, MESSAGE_LIVE_MAX_LIMIT);
 
     return nextLimit > currentLimit ? loadMessages(chatId, { limit: nextLimit }) : activeMessages.value;
   }
@@ -495,7 +558,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
 
     return loadMessages(activeChatId.value, {
-      limit: messageLimitByChat.value[activeChatId.value] || 50,
+      limit: messageLimitByChat.value[activeChatId.value] || MESSAGE_INITIAL_LIMIT,
     });
   }
 
@@ -670,6 +733,27 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       return queueMessage(chatId, text);
     }
 
+    const queuedId = options.message && options.message.id ? options.message.id : '';
+    const sendKey = createSendKey(chatId, text, queuedId);
+
+    if (inFlightSends.has(sendKey)) {
+      return inFlightSends.get(sendKey);
+    }
+
+    const request = performSendMessage(chatId, text, options);
+
+    inFlightSends.set(sendKey, request);
+
+    try {
+      return await request;
+    } finally {
+      if (inFlightSends.get(sendKey) === request) {
+        inFlightSends.delete(sendKey);
+      }
+    }
+  }
+
+  async function performSendMessage(chatId, text, options = {}) {
     const optimisticMessage = {
       ...(options.message && typeof options.message === 'object' ? options.message : {}),
       id: (options.message && options.message.id) || `local-${Date.now()}`,
@@ -677,6 +761,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       body: text,
       fromMe: true,
       timestamp: (options.message && options.message.timestamp) || Math.floor(Date.now() / 1000),
+      sortSequence: (options.message && options.message.sortSequence) || Date.now(),
       pending: true,
       queued: false,
       failed: false,
@@ -726,6 +811,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       body,
       fromMe: true,
       timestamp: Math.floor(Date.now() / 1000),
+      sortSequence: Date.now(),
       pending: true,
       queued: true,
       failed: false,
@@ -817,25 +903,60 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
           continue;
         }
 
-        await sendMessage(item.body, {
-          chatId: item.chatId,
-          force: true,
-          message: {
-            id: item.id,
+        if (isQueuedRetryBlocked(item)) {
+          continue;
+        }
+
+        try {
+          await sendMessage(item.body, {
             chatId: item.chatId,
-            body: item.body,
-            timestamp: item.createdAt || Math.floor(Date.now() / 1000),
-            fromMe: true,
-            queued: true,
-          },
-        });
-        sent.push(item.id);
+            force: true,
+            message: {
+              id: item.id,
+              chatId: item.chatId,
+              body: item.body,
+              timestamp: item.createdAt || Math.floor(Date.now() / 1000),
+              fromMe: true,
+              queued: true,
+            },
+          });
+          sent.push(item.id);
+        } catch (error) {
+          markQueuedMessageRetryFailure(item, error);
+        }
       }
     } finally {
       flushingQueue = false;
     }
 
     return sent;
+  }
+
+  function markQueuedMessageRetryFailure(item, error) {
+    const id = item && item.id;
+
+    if (!id) {
+      return;
+    }
+
+    const now = Date.now();
+    const attemptCount = Number(item.attemptCount || 0) + 1;
+    const nextQueue = queuedMessages.value.map(queued => {
+      if (queued.id !== id) {
+        return queued;
+      }
+
+      return {
+        ...queued,
+        attemptCount,
+        lastAttemptAt: now,
+        nextAttemptAt: now + OUTBOX_RETRY_BACKOFF_MS,
+        lastError: error && error.message ? error.message : 'Unable to send queued message.',
+      };
+    });
+
+    queuedMessages.value = nextQueue;
+    writeOutbox(nextQueue);
   }
 
   async function sendMedia(payload = {}) {
@@ -1413,6 +1534,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
         body: item.body,
         fromMe: true,
         timestamp: item.createdAt || Math.floor(Date.now() / 1000),
+        sortSequence: toComparableMessageTime(item.createdAt || Math.floor(Date.now() / 1000)),
         pending: true,
         queued: true,
         failed: false,
@@ -1450,9 +1572,11 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     if (targetIndex >= 0) {
       Object.assign(current[targetIndex], message);
       dedupeMessageInstances(current, targetIndex);
+      messagesByChat.value[chatId] = sortMessagesForThread(current);
       mergeCachedMessage(chatId, current[targetIndex]);
     } else {
       current.push(message);
+      messagesByChat.value[chatId] = sortMessagesForThread(current);
       mergeCachedMessage(chatId, message);
     }
   }
@@ -1481,6 +1605,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
 
     Object.assign(current[targetIndex], message);
     dedupeMessageInstances(current, targetIndex);
+    messagesByChat.value[chatId] = sortMessagesForThread(current);
 
     mergeCachedMessage(chatId, current[targetIndex]);
   }
@@ -1622,6 +1747,66 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
     }
   }
 
+  function sortMessagesForThread(list) {
+    return list
+      .map((message, index) => ({ message, index }))
+      .sort((a, b) => compareThreadMessages(a.message, b.message, a.index, b.index))
+      .map(item => item.message);
+  }
+
+  function compareThreadMessages(first, second, firstIndex = 0, secondIndex = 0) {
+    const firstTime = toComparableMessageTime(first);
+    const secondTime = toComparableMessageTime(second);
+
+    if (firstTime !== secondTime) {
+      return firstTime - secondTime;
+    }
+
+    return firstIndex - secondIndex;
+  }
+
+  function toComparableMessageTime(message) {
+    if (message && typeof message === 'object') {
+      const meta = message.payloadMeta && typeof message.payloadMeta === 'object' ? message.payloadMeta : {};
+      const sequence = normalizeComparableTime(message.sortSequence ?? meta.sortSequence);
+
+      if (sequence) {
+        return sequence;
+      }
+
+      const timestamp = normalizeComparableTime(
+        message.timestamp ??
+        message.t ??
+        message.createdAt ??
+        message.date
+      );
+
+      if (timestamp) {
+        return timestamp;
+      }
+
+      return 0;
+    }
+
+    return normalizeComparableTime(message);
+  }
+
+  function normalizeComparableTime(value) {
+    if (value === null || value === undefined || value === '') {
+      return 0;
+    }
+
+    const numeric = Number(value);
+
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return numeric > 9999999999 ? Math.floor(numeric) : Math.floor(numeric * 1000);
+    }
+
+    const parsed = Date.parse(String(value));
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  }
+
   function handleRealtimeEvent(payload) {
     payload = normalizeRealtimePayload(payload);
 
@@ -1658,6 +1843,7 @@ export const useWhatsAppStore = defineStore('whatsapp', () => {
       isConnected.value = data.isConnected ?? isConnected.value;
 
       if (isConnected.value) {
+        qrCode.value = '';
         flushQueuedMessages().catch(() => {});
       }
     }

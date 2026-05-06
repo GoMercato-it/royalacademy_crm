@@ -38,6 +38,17 @@ define('custom:views/whatsapp/setup', ['view', 'model'], function (View, Model) 
                         <div class="field" data-name="whatsappApiKey">
                             {{{whatsappApiKey}}}
                         </div>
+                        <div class="btn-group btn-group-sm" style="margin-top: 8px;">
+                            <button type="button" class="btn btn-default action" data-action="generateApiKey">
+                                Genera chiave
+                            </button>
+                        </div>
+                        <p class="help-block small">
+                            Questa chiave deve essere identica alla variabile <code>API_KEY</code>
+                            del container bridge WhatsApp. Usa solo URL di rete Docker interna,
+                            per esempio <code>http://whatsapp-api:3000</code>; non esporre il webhook
+                            no-auth su Internet.
+                        </p>
                     </div>
                 </div>
             </div>
@@ -91,7 +102,8 @@ define('custom:views/whatsapp/setup', ['view', 'model'], function (View, Model) 
 
         events = {
             'click [data-action="save"]': 'actionSave',
-            'click [data-action="cancel"]': 'actionCancel'
+            'click [data-action="cancel"]': 'actionCancel',
+            'click [data-action="generateApiKey"]': 'actionGenerateApiKey'
         };
 
         setup() {
@@ -165,6 +177,42 @@ define('custom:views/whatsapp/setup', ['view', 'model'], function (View, Model) 
 
                 Espo.Ui.error(msg);
             }
+        }
+
+        actionGenerateApiKey() {
+            let key;
+
+            try {
+                key = this.generateApiKey();
+            } catch (e) {
+                Espo.Ui.error(e.message || 'Web Crypto API is not available.');
+
+                return;
+            }
+
+            this.model.set('whatsappApiKey', key);
+
+            const fieldView = this.getView('whatsappApiKey');
+
+            if (fieldView && typeof fieldView.reRender === 'function') {
+                fieldView.reRender();
+            }
+
+            Espo.Ui.success('API key generated. Save settings and set the same API_KEY in the WhatsApp bridge container.');
+        }
+
+        generateApiKey() {
+            if (!window.crypto || typeof window.crypto.getRandomValues !== 'function') {
+                throw new Error('Web Crypto API is not available. Open EspoCRM over HTTPS and try again.');
+            }
+
+            const bytes = new Uint8Array(32);
+
+            window.crypto.getRandomValues(bytes);
+
+            return Array.from(bytes)
+                .map(value => value.toString(16).padStart(2, '0'))
+                .join('');
         }
 
         actionCancel() {

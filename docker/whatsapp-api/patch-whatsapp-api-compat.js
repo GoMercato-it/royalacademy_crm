@@ -57,6 +57,53 @@ patchFile(
     'wwebjs-api CRM webhook auth header isolation'
 );
 
+patchFile(
+    '/usr/src/app/src/sessions.js',
+    [
+        {
+            oldText: [
+                "  if (isEventEnabled('message_reaction')) {",
+                "    client.on('message_reaction', (reaction) => {",
+                "      triggerWebhook(sessionWebhook, sessionId, 'message_reaction', { reaction })",
+                "      triggerWebSocket(sessionId, 'message_reaction', { reaction })",
+                "    })",
+                "  }",
+            ].join('\n'),
+            newText: [
+                "  if (isEventEnabled('message_reaction')) {",
+                "    const maxReactionWebhookAgeSeconds = Number(process.env.REACTION_WEBHOOK_MAX_AGE_SECONDS || 300)",
+                "    const shouldForwardReactionWebhook = (reaction) => {",
+                "      if (!Number.isFinite(maxReactionWebhookAgeSeconds) || maxReactionWebhookAgeSeconds <= 0) {",
+                "        return true",
+                "      }",
+                "",
+                "      const rawTimestamp = reaction && (reaction.timestamp || reaction.t)",
+                "      const timestamp = Number(rawTimestamp)",
+                "",
+                "      if (!Number.isFinite(timestamp) || timestamp <= 0) {",
+                "        return true",
+                "      }",
+                "",
+                "      const timestampMs = timestamp > 9999999999 ? timestamp : timestamp * 1000",
+                "      return Date.now() - timestampMs <= maxReactionWebhookAgeSeconds * 1000",
+                "    }",
+                "",
+                "    client.on('message_reaction', (reaction) => {",
+                "      if (!shouldForwardReactionWebhook(reaction)) {",
+                "        logger.debug({ sessionId, reaction }, 'Skipped stale message_reaction webhook replay')",
+                "        return",
+                "      }",
+                "",
+                "      triggerWebhook(sessionWebhook, sessionId, 'message_reaction', { reaction })",
+                "      triggerWebSocket(sessionId, 'message_reaction', { reaction })",
+                "    })",
+                "  }",
+            ].join('\n'),
+        },
+    ],
+    'wwebjs-api stale message_reaction replay guard'
+);
+
 assertContains(
     '/usr/src/app/node_modules/whatsapp-web.js/src/structures/Chat.js',
     '.loadEarlierMsgs({ chat });',

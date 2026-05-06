@@ -36,27 +36,52 @@ class MessageDispatchService
         $messagePayload = $result['message'] ?? $result['data'] ?? [];
         $messageId = $this->extractMessageId($messagePayload['id'] ?? null) ?: uniqid('sent_');
         $timestamp = microtime(true);
-        $storedMessage = $this->storeMessage([
-            'body' => $message,
-            'chatId' => $chatId,
-            'fromMe' => true,
-            'timestamp' => $timestamp,
-            'status' => 'Sent',
-            'messageId' => $messageId,
-            'payloadMeta' => [
-                'source' => 'sendMessage',
-                'sortSequence' => (int) round(microtime(true) * 1000),
-            ],
-        ]);
+        $deduped = false;
+
+        try {
+            $storedMessage = $this->storeMessage([
+                'body' => $message,
+                'chatId' => $chatId,
+                'fromMe' => true,
+                'timestamp' => $timestamp,
+                'status' => 'Sent',
+                'messageId' => $messageId,
+                'payloadMeta' => [
+                    'source' => 'sendMessage',
+                    'sortSequence' => (int) round(microtime(true) * 1000),
+                ],
+            ]);
+        } catch (\PDOException $e) {
+            if (!$this->isDuplicateException($e) || !$messageId) {
+                throw $e;
+            }
+
+            $storedMessage = $this->findStoredMessageByMessageId($messageId);
+
+            if (!$storedMessage) {
+                throw $e;
+            }
+
+            $deduped = true;
+            $this->log->info('WhatsApp sendMessage persistence deduped existing message', [
+                'chatId' => $chatId,
+                'messageId' => $messageId,
+            ]);
+        }
 
         $payload = $this->normalizeEntityForBroadcast($storedMessage);
-        $this->chatListSnapshotService->clearSnapshot();
-        $this->broadcastMessage($payload['chatId'], $payload);
+
+        if (!$deduped) {
+            $this->chatListSnapshotService->clearSnapshot();
+            $this->broadcastMessage($payload['chatId'], $payload);
+        }
 
         return [
             'success' => true,
             'messageId' => $payload['messageId'],
             'message' => $payload,
+            'deduped' => $deduped,
+            'source' => $deduped ? 'existing' : 'sendMessage',
         ];
     }
 
@@ -498,6 +523,14 @@ class MessageDispatchService
             ->find();
 
         return $this->pickCandidateByTimestamp($candidates, $timestamp);
+    }
+
+    private function findStoredMessageByMessageId(string $messageId): ?Entity
+    {
+        return $this->entityManager
+            ->getRepository('WhatsAppMessage')
+            ->where(['messageId' => $messageId])
+            ->findOne();
     }
 
     private function buildBodyPreview(string $body): string
